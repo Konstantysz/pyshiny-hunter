@@ -1,13 +1,18 @@
 import argparse
 import os
-
-from desmume.emulator import DeSmuME
+import logging
 from pathlib import Path
 from typing import Optional
 
+from desmume.emulator import DeSmuME
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 def main(rom_path: Path, sav_path: Optional[Path] = None):
     if not os.path.exists(rom_path):
-        print(f"Error: ROM file '{rom_path}' not found.")
+        logger.error(f"ROM file '{rom_path}' not found.")
         return
 
     emu = DeSmuME()
@@ -16,9 +21,9 @@ def main(rom_path: Path, sav_path: Optional[Path] = None):
     if sav_path:
         if os.path.exists(sav_path):
             emu.savestate.load_file(sav_path)
-            print(f"Loaded save file: {sav_path}")
+            logger.info(f"Loaded save file: {sav_path}")
         else:
-            print(f"Warning: Save file '{sav_path}' not found. Starting a new game.")
+            logger.warning(f"Save file '{sav_path}' not found. Starting a new game.")
 
     window = emu.create_sdl_window()
 
@@ -35,4 +40,4 @@ if __name__ == "__main__":
     parser.add_argument("--sav", type=str, default=None, help="Path to the .sav save file (optional)")
     
     args = parser.parse_args()
-    main(args.rom, args.sav)
+    main(Path(args.rom), Path(args.sav) if args.sav else None)
