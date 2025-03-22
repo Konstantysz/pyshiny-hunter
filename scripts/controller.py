@@ -10,7 +10,7 @@ from desmume.emulator import DeSmuME
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def main(rom_path: Path, sav_path: Optional[Path] = None):
+def main(rom_path: Path, save_path: Optional[Path] = None):
     if not os.path.exists(rom_path):
         logger.error(f"ROM file '{rom_path}' not found.")
         return
@@ -18,12 +18,16 @@ def main(rom_path: Path, sav_path: Optional[Path] = None):
     emu = DeSmuME()
     emu.open(str(rom_path))
 
-    if sav_path:
-        if os.path.exists(sav_path):
-            emu.savestate.load_file(sav_path)
-            logger.info(f"Loaded save file: {sav_path}")
+    if save_path:
+        if os.path.exists(save_path):
+            if save_path.suffix == ".sav":
+                # Handle "SAV" files
+                logger.error(f"NDS memory \".sav\" files are not yet handled.")
+            elif save_path.suffix == ".dst":
+                emu.savestate.load_file(str(save_path))
+                logger.info(f"Loaded save file: {save_path}")
         else:
-            logger.warning(f"Save file '{sav_path}' not found. Starting a new game.")
+            logger.warning(f"Save file '{save_path}' not found. Starting a new game.")
 
     window = emu.create_sdl_window()
 
@@ -38,6 +42,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("rom", type=str, help="Path to the .nds ROM file")
     parser.add_argument("--sav", type=str, default=None, help="Path to the .sav save file (optional)")
+    parser.add_argument("--state", type=str, default=None, help="Path to the .dst save state file (optional)")
     
     args = parser.parse_args()
-    main(Path(args.rom), Path(args.sav) if args.sav else None)
+    save = Path(args.state) if args.state else Path(args.sav) if args.sav else None  
+    main(Path(args.rom), save)
