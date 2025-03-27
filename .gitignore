@@ -1,4 +1,6 @@
 .vscode/
+data/
+resources/
 roms/
 
 # Byte-compiled / optimized / DLL files
