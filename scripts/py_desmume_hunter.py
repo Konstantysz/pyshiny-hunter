@@ -15,7 +15,7 @@ def main(rom_path: Path, save_path: Optional[Path] = None):
 
     hunter = Black2Hunter()
 
-    while emulator.update_frame():
+    while emulator.update_frame(hunter.get_encounters()):
         top_screen, bottom_screen = emulator.get_screens()
         hunter.process_frame(top_screen, bottom_screen, emulator.get_frame_number())
 

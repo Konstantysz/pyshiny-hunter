@@ -45,3 +45,6 @@ class Hunter(ABC):
 
     def get_hunt_state(self) -> HuntState:
         return self.hunt_state
+
+    def get_encounters(self) -> Dict[str, int]:
+        return self.encounters

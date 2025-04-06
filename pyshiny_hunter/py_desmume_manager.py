@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from queue import Queue
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 from desmume.controls import Keys, keymask
@@ -34,7 +34,7 @@ class PyDeSmuMEManager:
         self.frame = 0
         self.input_queue = Queue()
 
-    def update_frame(self) -> bool:
+    def update_frame(self, encounters: Dict[str, int]) -> bool:
         if self.window.has_quit():
             return False
 
