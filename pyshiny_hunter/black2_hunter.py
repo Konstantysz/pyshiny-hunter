@@ -16,13 +16,17 @@ BATTLE_BOTTOM_SCREEN_AVERAGE_PIXEL_VALUE: int = 55
 
 
 class Black2Hunter(Hunter):
+    characters_in_pokemon_names: str
+
     def __init__(self, hunted_pokemon: Optional[List[str] | str] = None):
         Hunter.__init__(self, hunted_pokemon)
 
         self.pokemon_database = dict()
         for gen_file in ["gen1.csv", "gen2.csv", "gen3.csv", "gen4.csv", "gen5.csv"]:
             try:
-                with open(f"resources/pokemon_names/{gen_file}", "r") as file:
+                with open(
+                    f"resources/pokemon_names/{gen_file}", "r", encoding="utf-8"
+                ) as file:
                     next(file)  # Skip the first line of the file as it is header.
                     self.pokemon_database.update(
                         (
@@ -40,6 +44,15 @@ class Black2Hunter(Hunter):
                     )
             except FileNotFoundError:
                 logger.warning(f"File {gen_file} not found. Skipping.")
+
+        self.characters_in_pokemon_names = (
+            "".join(sorted(set("".join(self.pokemon_database.keys()))))
+            .replace("'", "")  # Handle Farfetch'd
+            .replace(" ", "")  # Handle Mr. Mime and Mime Jr.
+            .replace("-", "")  # Handle Porygon-Z
+            .replace("♀", "")  # Hangle Nidoran♀
+            .replace("♂", "")  # Handle Nidoran♂
+        )
 
     def process_frame(
         self, top_screen: np.ndarray, bottom_screen: np.ndarray, frame: int
@@ -93,7 +106,9 @@ class Black2Hunter(Hunter):
         resized_region = cv.resize(cropped_region, (0, 0), fx=3.0, fy=3.0)
         gray_region = cv.cvtColor(resized_region, cv.COLOR_BGR2GRAY)
         _, thresholded_region = cv.threshold(gray_region, 127, 255, cv.THRESH_BINARY)
-        tesseract_config = "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-."
+        tesseract_config = (
+            f'--psm 7 -c tessedit_char_whitelist="{self.characters_in_pokemon_names}"'
+        )
         raw_name = pytesseract.image_to_string(
             thresholded_region, config=tesseract_config
         ).strip()
