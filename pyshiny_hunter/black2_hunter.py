@@ -1,13 +1,13 @@
+import re
+from difflib import get_close_matches
+from typing import List, Optional
+
 import cv2 as cv
 import numpy as np
 import pytesseract
-from typing import List, Optional
 
 from pyshiny_hunter.hunter import Hunter, HuntState
 from pyshiny_hunter.module_logger import logger
-from difflib import get_close_matches
-import re
-
 
 POKEBALL_LIGHT_PIXEL_THRESHOLD: int = 230
 WHITE_SCREEN_AVERAGE_PIXEL_VALUE: int = 247
@@ -137,4 +137,5 @@ class Black2Hunter(Hunter):
         else:
             self.encounters[encounter_name] = 1
 
+        return encounter_name
         return encounter_name

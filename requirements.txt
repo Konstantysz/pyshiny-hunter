@@ -1,4 +1,6 @@
+black
 numpy
 opencv-python
 py-desmume
 pytesseract
+ruff

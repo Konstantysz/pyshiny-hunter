@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 from enum import Enum
+from typing import Dict, List, Optional
+
 import numpy as np
-from typing import Dict, Optional, List, Set, Tuple
 
 
 class HuntState(Enum):
@@ -21,10 +22,10 @@ class Hunter(ABC):
 
     def __init__(self, hunted_pokemon: Optional[List[str] | str] = None):
         super().__init__()
-        
+
         self.hunt_state = HuntState.SEARCH
         self.encounters = {}
-        
+
         if hunted_pokemon is not None:
             if isinstance(hunted_pokemon, str):
                 self.hunted_pokemon = [hunted_pokemon]
@@ -34,13 +35,13 @@ class Hunter(ABC):
                 raise ValueError("hunted_pokemon must be a string or a list of strings")
         else:
             self.hunted_pokemon = None
-            
-        pokemon_database = {}
+
+        self.pokemon_database = {}
 
     @abstractmethod
     def process_frame(
         self, top_screen: np.ndarray, bottom_screen: np.ndarray
     ) -> bool: ...
-    
+
     def get_hunt_state(self) -> HuntState:
         return self.hunt_state

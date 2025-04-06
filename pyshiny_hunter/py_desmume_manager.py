@@ -1,10 +1,11 @@
-from desmume.emulator import DeSmuME, DeSmuME_SDL_Window
-from desmume.controls import keymask, Keys
-import numpy as np
 import os
 from pathlib import Path
 from queue import Queue
 from typing import Optional, Tuple
+
+import numpy as np
+from desmume.controls import Keys, keymask
+from desmume.emulator import DeSmuME, DeSmuME_SDL_Window
 
 from pyshiny_hunter.module_logger import logger
 
@@ -84,10 +85,10 @@ class PyDeSmuMEManager:
     def __load_save(self, save_path: Path) -> None:
         if os.path.exists(save_path):
             if save_path.suffix == ".sav":
-                # Handle "SAV" files
-                logger.error(f'NDS memory ".sav" files are not yet handled.')
+                logger.error('NDS memory ".sav" files are not yet handled.')
             elif save_path.suffix == ".dst":
                 self.emulator.savestate.load_file(str(save_path))
                 logger.info(f"Loaded save file: {save_path}")
         else:
+            logger.warning(f"Save file '{save_path}' not found. Starting a new game.")
             logger.warning(f"Save file '{save_path}' not found. Starting a new game.")

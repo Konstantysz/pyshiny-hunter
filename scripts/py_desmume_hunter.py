@@ -1,9 +1,7 @@
 import argparse
-from desmume.controls import keymask, Keys
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Optional
-
 
 # Add the parent directory of pyshiny_hunter to the Python path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -30,7 +28,10 @@ def main(rom_path: Path, save_path: Optional[Path] = None):
                 emulator.add_input_to_queue("key", key="KEY_RIGHT")
         elif hunt_state == HuntState.BATTLE:
             SHINY_FRAME_COUNT: int = 500
-            if hunter.battle_ready_frame - hunter.battle_start_frame > SHINY_FRAME_COUNT:
+            if (
+                hunter.battle_ready_frame - hunter.battle_start_frame
+                > SHINY_FRAME_COUNT
+            ):
                 print("SHINY POKEMON!!!!!!!!!!!!")
                 emulator.emulator.savestate.save_file(
                     f"roms/states/black2/shiny_{SHINY_FRAME_COUNT}.dst"
@@ -40,7 +41,7 @@ def main(rom_path: Path, save_path: Optional[Path] = None):
                 emulator.add_input_to_queue("touch", x=128, y=180)
                 hunter.hunt_state = HuntState.SEARCH
 
-                print(f"Encounters:")
+                print("Encounters:")
                 for encounter_name, encounter_count in hunter.encounters.items():
                     print(f"{encounter_name}: {encounter_count}")
 
