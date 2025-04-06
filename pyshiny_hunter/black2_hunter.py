@@ -1,6 +1,7 @@
 import cv2 as cv
 import numpy as np
 import pytesseract
+from typing import List, Optional
 
 from pyshiny_hunter.hunter import Hunter, HuntState
 from pyshiny_hunter.module_logger import logger
@@ -13,8 +14,22 @@ BATTLE_BOTTOM_SCREEN_AVERAGE_PIXEL_VALUE: int = 55
 
 
 class Black2Hunter(Hunter):
-    def __init__(self):
-        Hunter.__init__(self)
+    def __init__(self, hunted_pokemon: Optional[List[str] | str] = None):
+        Hunter.__init__(self, hunted_pokemon)
+        
+        self.pokemon_database = set()
+        for gen_file in ["gen1.csv", "gen2.csv", "gen3.csv", "gen4.csv", "gen5.csv"]:
+            try:
+                with open(f"resources/pokemon_names/{gen_file}", "r") as file:
+                    next(file)  # Skip the first line of the file as it is header.
+                    self.pokemon_database.update(
+                        (line.split(",")[1].strip(), int(line.split(",")[0].strip()))
+                        if len(line.split(",")) > 1 else None
+                        for line in file
+                        if line.strip() and "," in line and not line.startswith("number")
+                    )
+            except FileNotFoundError:
+                logger.warning(f"File {gen_file} not found. Skipping.")
 
     def process_frame(
         self, top_screen: np.ndarray, bottom_screen: np.ndarray, frame: int
@@ -64,9 +79,14 @@ class Black2Hunter(Hunter):
         return pixels_above_threshold > AVERAGE_PIXEL_THRESHOLD
 
     def __determine_encounter(self, top_screen: np.ndarray) -> str:
+        cropped_region = top_screen[30:40, 10:75]
+        resized_region = cv.resize(cropped_region, (0, 0), fx=3.0, fy=3.0)
+        gray_region = cv.cvtColor(resized_region, cv.COLOR_BGR2GRAY)
+        _, thresholded_region = cv.threshold(gray_region, 127, 255, cv.THRESH_BINARY)
+        tesseract_config = "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-"
         encounter_name = pytesseract.image_to_string(
-            cv.resize(top_screen[30:40, 10:75], (0, 0), fx=3.0, fy=3.0)
-        ).replace("\n", "")
+            thresholded_region, config=tesseract_config
+        ).strip()
 
         if encounter_name in self.encounters.keys():
             self.encounters[encounter_name] += 1
