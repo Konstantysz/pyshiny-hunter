@@ -5,6 +5,8 @@ from typing import List, Optional
 
 from pyshiny_hunter.hunter import Hunter, HuntState
 from pyshiny_hunter.module_logger import logger
+from difflib import get_close_matches
+import re
 
 
 POKEBALL_LIGHT_PIXEL_THRESHOLD: int = 230
@@ -16,7 +18,7 @@ BATTLE_BOTTOM_SCREEN_AVERAGE_PIXEL_VALUE: int = 55
 class Black2Hunter(Hunter):
     def __init__(self, hunted_pokemon: Optional[List[str] | str] = None):
         Hunter.__init__(self, hunted_pokemon)
-        
+
         self.pokemon_database = dict()
         for gen_file in ["gen1.csv", "gen2.csv", "gen3.csv", "gen4.csv", "gen5.csv"]:
             try:
@@ -91,12 +93,48 @@ class Black2Hunter(Hunter):
         resized_region = cv.resize(cropped_region, (0, 0), fx=3.0, fy=3.0)
         gray_region = cv.cvtColor(resized_region, cv.COLOR_BGR2GRAY)
         _, thresholded_region = cv.threshold(gray_region, 127, 255, cv.THRESH_BINARY)
-        tesseract_config = "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-"
-        encounter_name = pytesseract.image_to_string(
+        tesseract_config = "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-."
+        raw_name = pytesseract.image_to_string(
             thresholded_region, config=tesseract_config
         ).strip()
+
+        formatted_name = re.sub(
+            r"(?<!^)(?<![-. ])[A-Z]",  # Matches uppercase letters not preceded by start, "-", ".", or space
+            lambda match: match.group(0).lower(),  # Convert to lowercase
+            raw_name,
+        )
+
+        encounter_name = re.sub(
+            r"(?:^|[-. ])[a-z]",  # Matches lowercase letters at the start or after "-", ".", or space
+            lambda match: match.group(0).upper(),  # Convert to uppercase
+            formatted_name,
+        )
+
+        if encounter_name in self.pokemon_database:
+            if encounter_name in self.encounters.keys():
+                self.encounters[encounter_name] += 1
+            else:
+                self.encounters[encounter_name] = 1
+            return encounter_name
+
+        probable_matches = get_close_matches(
+            encounter_name, self.pokemon_database, n=1, cutoff=0.6
+        )
+        if probable_matches:
+            corrected_name = probable_matches[0]
+            if corrected_name in self.encounters.keys():
+                self.encounters[corrected_name] += 1
+            else:
+                self.encounters[corrected_name] = 1
+            return corrected_name
+
+        logger.warning(
+            f"Encounter name '{encounter_name}' not recognized and no close match found."
+        )
 
         if encounter_name in self.encounters.keys():
             self.encounters[encounter_name] += 1
         else:
             self.encounters[encounter_name] = 1
+
+        return encounter_name
