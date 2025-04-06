@@ -25,6 +25,7 @@ class PyDeSmuMEManager:
 
         self.emulator = DeSmuME()
         self.emulator.open(str(rom_path))
+        self.emulator.volume_set(0)
 
         if save_path:
             self.__load_save(save_path)
