@@ -17,7 +17,7 @@ class Hunter(ABC):
     hunt_state: HuntState
     encounters: Dict[str, int]
     hunted_pokemon: Optional[List[str]]
-    pokemon_database: Set[Tuple[str, int]]
+    pokemon_database: Dict[str, int]
 
     def __init__(self, hunted_pokemon: Optional[List[str] | str] = None):
         super().__init__()

@@ -17,16 +17,24 @@ class Black2Hunter(Hunter):
     def __init__(self, hunted_pokemon: Optional[List[str] | str] = None):
         Hunter.__init__(self, hunted_pokemon)
         
-        self.pokemon_database = set()
+        self.pokemon_database = dict()
         for gen_file in ["gen1.csv", "gen2.csv", "gen3.csv", "gen4.csv", "gen5.csv"]:
             try:
                 with open(f"resources/pokemon_names/{gen_file}", "r") as file:
                     next(file)  # Skip the first line of the file as it is header.
                     self.pokemon_database.update(
-                        (line.split(",")[1].strip(), int(line.split(",")[0].strip()))
-                        if len(line.split(",")) > 1 else None
+                        (
+                            (
+                                line.split(",")[1].strip(),
+                                int(line.split(",")[0].strip()),
+                            )
+                            if len(line.split(",")) > 1
+                            else None
+                        )
                         for line in file
-                        if line.strip() and "," in line and not line.startswith("number")
+                        if line.strip()
+                        and "," in line
+                        and not line.startswith("number")
                     )
             except FileNotFoundError:
                 logger.warning(f"File {gen_file} not found. Skipping.")
