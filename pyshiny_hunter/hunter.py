@@ -1,50 +1,57 @@
-from abc import ABC, abstractmethod
-from enum import Enum
+from abc import ABCMeta, abstractmethod
 from typing import Dict, List, Optional
 
 import numpy as np
+from statemachine import State, StateMachine
 
 
-class HuntState(Enum):
-    SEARCH = 0
-    CHECK_SHINY = 1
-    BATTLE_LOADING = 2
-    BATTLE = 3
-    RUN = 4
-    FOUND = 5
+class HunterMeta(type(StateMachine), ABCMeta):
+    pass
 
 
-class Hunter(ABC):
-    hunt_state: HuntState
+class Hunter(StateMachine, metaclass=HunterMeta):
     encounters: Dict[str, int]
-    hunted_pokemon: Optional[List[str]]
-    pokemon_database: Dict[str, int]
+
+    search = State("Searching for shiny Pokemon...", initial=True)
+    check_if_shiny = State("Checking if Pokemon is shiny")
+    pre_battle_animation = State("Pre-battle animation")
+    in_battle = State("In battle")
+    found = State("Found shiny Pokemon", final=True)
+
+    searching_pokemon = search.to(check_if_shiny, cond="_found_pokemon") | search.to(
+        search, unless="_found_pokemon"
+    )
+    checking_shiny = check_if_shiny.to(
+        pre_battle_animation, cond="_checked_shiny"
+    ) | check_if_shiny.to(check_if_shiny, unless="_checked_shiny")
+    waiting_for_battle_start = pre_battle_animation.to(
+        in_battle, cond="_battle_started"
+    ) | pre_battle_animation.to(pre_battle_animation, unless="_battle_started")
+    running_away = in_battle.to(found, cond="_is_pokemon_shiny") | in_battle.to(
+        search, unless="_is_pokemon_shiny"
+    )
 
     def __init__(self, hunted_pokemon: Optional[List[str] | str] = None):
+        self.encounters = dict()
         super().__init__()
 
-        self.hunt_state = HuntState.SEARCH
-        self.encounters = {}
-
-        if hunted_pokemon is not None:
-            if isinstance(hunted_pokemon, str):
-                self.hunted_pokemon = [hunted_pokemon]
-            elif isinstance(hunted_pokemon, list):
-                self.hunted_pokemon = hunted_pokemon
-            else:
-                raise ValueError("hunted_pokemon must be a string or a list of strings")
-        else:
-            self.hunted_pokemon = None
-
-        self.pokemon_database = {}
+    @abstractmethod
+    def _found_pokemon(self, top_screen: np.ndarray, bottom_screen: np.ndarray) -> bool:
+        pass
 
     @abstractmethod
-    def process_frame(
-        self, top_screen: np.ndarray, bottom_screen: np.ndarray
-    ) -> bool: ...
+    def _checked_shiny(self, top_screen: np.ndarray, bottom_screen: np.ndarray) -> bool:
+        pass
 
-    def get_hunt_state(self) -> HuntState:
-        return self.hunt_state
+    @abstractmethod
+    def _battle_started(
+        self, top_screen: np.ndarray, bottom_screen: np.ndarray
+    ) -> bool:
+        pass
+
+    @abstractmethod
+    def _is_pokemon_shiny(self, wild_pokemon_animation_length: int) -> bool:
+        pass
 
     def get_encounters(self) -> Dict[str, int]:
         return self.encounters

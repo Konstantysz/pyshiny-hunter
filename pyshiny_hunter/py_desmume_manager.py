@@ -3,11 +3,20 @@ from pathlib import Path
 from queue import Queue
 from typing import Dict, Optional, Tuple
 
+import glfw
+import imgui
 import numpy as np
+import OpenGL.GL as gl
 from desmume.controls import Keys, keymask
 from desmume.emulator import DeSmuME, DeSmuME_SDL_Window
+from imgui.integrations.glfw import GlfwRenderer
 
 from pyshiny_hunter.module_logger import logger
+from pyshiny_hunter.utils.gui_utils import (
+    glfw_init,
+    opengl_create_texture,
+    opengl_update_texture,
+)
 
 
 class PyDeSmuMEManager:
@@ -30,17 +39,47 @@ class PyDeSmuMEManager:
         if save_path:
             self.__load_save(save_path)
 
-        self.window = self.emulator.create_sdl_window()
         self.frame = 0
         self.input_queue = Queue()
 
+        imgui.create_context()
+        self.window = glfw_init("PyShinyHunter")
+        self.renderer = GlfwRenderer(self.window)
+        self.texture_id = opengl_create_texture(256, 384)
+
+    def __del__(self):
+        self.renderer.shutdown()
+        glfw.terminate()
+
     def update_frame(self, encounters: Dict[str, int]) -> bool:
-        if self.window.has_quit():
+        if glfw.window_should_close(self.window):
             return False
 
-        self.__process_inputs()
+        glfw.poll_events()
+        self.renderer.process_inputs()
+        imgui.new_frame()
 
-        self.__draw_frame()
+        gl.glClearColor(0.1, 0.1, 0.1, 1)
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+
+        with imgui.begin("DeSmuME"):
+            imgui.image(self.texture_id, 256, 384)  # Adjust size as needed
+
+        with imgui.begin("Encounter Info"):
+            imgui.separator()
+            for encounter, count in encounters.items():
+                imgui.text(f"{encounter}: {count}")
+
+        self.__emulator_process_inputs()
+        self.__emulator_next_frame()
+
+        opengl_update_texture(
+            np.array(self.emulator.screenshot().convert("RGBA")), self.texture_id
+        )
+
+        imgui.render()
+        self.renderer.render(imgui.get_draw_data())
+        glfw.swap_buffers(self.window)
 
         return True
 
@@ -57,7 +96,7 @@ class PyDeSmuMEManager:
     def add_input_to_queue(self, action_type: str, **kwargs):
         self.input_queue.put({"type": action_type, "params": kwargs})
 
-    def __process_inputs(self):
+    def __emulator_process_inputs(self):
         self.emulator.input.keypad_rm_key(Keys.KEY_NONE)
         self.emulator.input.touch_release()
 
@@ -78,9 +117,8 @@ class PyDeSmuMEManager:
             elif action_type == "release_touch":
                 self.emulator.input.touch_release()
 
-    def __draw_frame(self):
+    def __emulator_next_frame(self):
         self.emulator.cycle()
-        self.window.draw()
         self.frame += 1
 
     def __load_save(self, save_path: Path) -> None:

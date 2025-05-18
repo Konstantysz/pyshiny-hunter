@@ -6,7 +6,7 @@ import cv2 as cv
 import numpy as np
 import pytesseract
 
-from pyshiny_hunter.hunter import Hunter, HuntState
+from pyshiny_hunter.hunter import Hunter
 from pyshiny_hunter.module_logger import logger
 
 POKEBALL_LIGHT_PIXEL_THRESHOLD: int = 230
@@ -54,37 +54,19 @@ class Black2Hunter(Hunter):
             .replace("♂", "")  # Handle Nidoran♂
         )
 
-    def process_frame(
-        self, top_screen: np.ndarray, bottom_screen: np.ndarray, frame: int
-    ) -> bool:
-        bottom_screen_pixel_average = int(np.sum(bottom_screen) / bottom_screen.size)
+    def _found_pokemon(self, top_screen: np.ndarray, bottom_screen: np.ndarray) -> bool:
+        top_screen_average_pixel = int(np.sum(top_screen) / top_screen.size)
+        bottom_screen_average_pixel = int(np.sum(bottom_screen) / bottom_screen.size)
+        return (
+            top_screen_average_pixel > WHITE_SCREEN_AVERAGE_PIXEL_VALUE
+            and bottom_screen_average_pixel > WHITE_SCREEN_AVERAGE_PIXEL_VALUE
+        )
 
-        if (
-            self.hunt_state == HuntState.SEARCH
-            and bottom_screen_pixel_average > WHITE_SCREEN_AVERAGE_PIXEL_VALUE
-        ):
-            self.hunt_state = HuntState.CHECK_SHINY
-            self.battle_start_frame = frame
-            return
+    def _checked_shiny(self, top_screen: np.ndarray, bottom_screen: np.ndarray) -> bool:
+        bottom_avg = int(np.sum(bottom_screen) / bottom_screen.size)
+        if bottom_avg > POKEBALL_RELEASE_AVERAGE_PIXEL_VALUE:
+            return False
 
-        if (
-            self.hunt_state == HuntState.CHECK_SHINY
-            and bottom_screen_pixel_average < POKEBALL_RELEASE_AVERAGE_PIXEL_VALUE
-            and self.__is_pokemon_released(top_screen)
-        ):
-            self.hunt_state = HuntState.BATTLE_LOADING
-            self.__determine_encounter(top_screen)
-            self.battle_ready_frame = frame
-            return
-
-        if (
-            self.hunt_state == HuntState.BATTLE_LOADING
-            and bottom_screen_pixel_average > BATTLE_BOTTOM_SCREEN_AVERAGE_PIXEL_VALUE
-        ):
-            self.hunt_state = HuntState.BATTLE
-            return
-
-    def __is_pokemon_released(self, top_screen: np.ndarray) -> bool:
         AVERAGE_PIXEL_THRESHOLD = 20.0
         screen_height, screen_width, _ = top_screen.shape
         pixels_above_threshold = (
@@ -99,7 +81,22 @@ class Black2Hunter(Hunter):
             * 100.0
         )
 
-        return pixels_above_threshold > AVERAGE_PIXEL_THRESHOLD
+        if pixels_above_threshold < AVERAGE_PIXEL_THRESHOLD:
+            return False
+
+        self.__determine_encounter(top_screen)
+
+        return True
+
+    def _battle_started(
+        self, top_screen: np.ndarray, bottom_screen: np.ndarray
+    ) -> bool:
+        avg_pixel = int(np.sum(bottom_screen) / bottom_screen.size)
+        return avg_pixel > BATTLE_BOTTOM_SCREEN_AVERAGE_PIXEL_VALUE
+
+    def _is_pokemon_shiny(self, wild_pokemon_animation_length: int) -> bool:
+        SHINY_FRAME_COUNT: int = 500
+        return wild_pokemon_animation_length > SHINY_FRAME_COUNT
 
     def __determine_encounter(self, top_screen: np.ndarray) -> str:
         cropped_region = top_screen[30:40, 10:75]
@@ -152,5 +149,4 @@ class Black2Hunter(Hunter):
         else:
             self.encounters[encounter_name] = 1
 
-        return encounter_name
         return encounter_name

@@ -2,5 +2,8 @@ black
 numpy
 opencv-python
 py-desmume
+imgui[full]
+PyOpenGL
 pytesseract
+python-statemachine[diagrams]
 ruff
