@@ -9,38 +9,43 @@ from pyshiny_hunter.black2_hunter import Black2Hunter
 from pyshiny_hunter.py_desmume_manager import PyDeSmuMEManager
 
 
-def emulator_worker(emulator: PyDeSmuMEManager):
-    hunter = Black2Hunter()
-    battle_ready_frame = -1
-    battle_start_frame = -1
+def emulator_worker(manager: PyDeSmuMEManager):
+    hunters = [Black2Hunter(), Black2Hunter()]
+    battle_ready_frame_list = [-1, -1]
+    battle_start_frame_list = [-1, -1]
 
-    while emulator.update_frame(hunter.get_encounters()):
-        top_screen, bottom_screen = emulator.get_screens()
+    while manager.update_frame(hunters[0].get_encounters()):
+        emulators = manager.get_emulators()
+        for emulator_id, emulator in enumerate(emulators):
+            top_screen, bottom_screen = emulator.get_screens()
 
-        if hunter.current_state.id == "search":
-            hunter.searching_pokemon(top_screen, bottom_screen)
+            if hunters[emulator_id].current_state.id == "search":
+                hunters[emulator_id].searching_pokemon(top_screen, bottom_screen)
 
-            if emulator.frame % 10 == 0:
-                emulator.add_input_to_queue("key", key="KEY_LEFT")
-            elif emulator.frame % 10 == 5:
-                emulator.add_input_to_queue("key", key="KEY_RIGHT")
-        elif hunter.current_state.id == "check_if_shiny":
-            hunter.checking_shiny(top_screen, bottom_screen)
-            if battle_start_frame == -1:
-                battle_start_frame = emulator.get_frame_number()
-        elif hunter.current_state.id == "pre_battle_animation":
-            hunter.waiting_for_battle_start(top_screen, bottom_screen)
-            if battle_ready_frame == -1:
-                battle_ready_frame = emulator.get_frame_number()
-        elif hunter.current_state.id == "in_battle":
-            hunter.running_away(battle_ready_frame - battle_start_frame)
-            if hunter.current_state.id == "found":
-                print("SHINY POKEMON!!!!!!!!!!!!")
-                emulator.emulator.savestate.save_file(
-                    f"roms/states/black2/shiny_{battle_ready_frame - battle_start_frame}.dst"
+                if manager.frame % 10 == 0:
+                    manager.add_input_to_queue(emulator_id, "key", key="KEY_LEFT")
+                elif manager.frame % 10 == 5:
+                    manager.add_input_to_queue(emulator_id, "key", key="KEY_RIGHT")
+            elif hunters[emulator_id].current_state.id == "check_if_shiny":
+                hunters[emulator_id].checking_shiny(top_screen, bottom_screen)
+                if battle_start_frame_list[emulator_id] == -1:
+                    battle_start_frame_list[emulator_id] = manager.get_frame_number()
+            elif hunters[emulator_id].current_state.id == "pre_battle_animation":
+                hunters[emulator_id].waiting_for_battle_start(top_screen, bottom_screen)
+                if battle_ready_frame_list[emulator_id] == -1:
+                    battle_ready_frame_list[emulator_id] = manager.get_frame_number()
+            elif hunters[emulator_id].current_state.id == "in_battle":
+                hunters[emulator_id].running_away(
+                    battle_ready_frame_list[emulator_id]
+                    - battle_start_frame_list[emulator_id]
                 )
-            else:
-                emulator.add_input_to_queue("touch", x=128, y=180)
+                if hunters[emulator_id].current_state.id == "found":
+                    print("SHINY POKEMON!!!!!!!!!!!!")
+                    manager.emulator.savestate.save_file(
+                        f"roms/states/black2/shiny_{battle_ready_frame_list[emulator_id] - battle_start_frame_list[emulator_id]}.dst"
+                    )
+                else:
+                    manager.add_input_to_queue(emulator_id, "touch", x=128, y=180)
 
 
 def main(rom_path: Path, save_path: Optional[Path] = None):

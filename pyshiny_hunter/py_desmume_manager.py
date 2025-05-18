@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from queue import Queue
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import glfw
 import imgui
@@ -19,11 +19,46 @@ from pyshiny_hunter.utils.gui_utils import (
 )
 
 
+class DeSmuMEWrapper:
+    def __init__(self, rom_path: Path, save_path: Optional[Path] = None):
+        self.emulator = DeSmuME()
+        self.emulator.open(str(rom_path))
+        self.emulator.volume_set(0)
+
+        if save_path:
+            self.__load_save(save_path)
+
+    def step(self):
+        # Obsługa wejść i przejście do następnej klatki
+        pass
+
+    def take_screenshot(self) -> np.ndarray:
+        return np.array(self.emulator.screenshot().convert("RGBA"))
+
+    def get_screens(self) -> Tuple[np.ndarray, np.ndarray]:
+        screen = self.take_screenshot()[:, :, ::-1].copy()
+        top_screen = screen[: int(screen.shape[0] / 2), :, 1:]
+        bottom_screen = screen[int(screen.shape[0] / 2) :, :, 1:]
+        return (top_screen, bottom_screen)
+
+    def __load_save(self, save_path: Path) -> None:
+        if os.path.exists(save_path):
+            if save_path.suffix == ".sav":
+                logger.error('NDS memory ".sav" files are not yet handled.')
+            elif save_path.suffix == ".dst":
+                self.emulator.savestate.load_file(str(save_path))
+                logger.info(f"Loaded save file: {save_path}")
+        else:
+            logger.warning(f"Save file '{save_path}' not found. Starting a new game.")
+
+
 class PyDeSmuMEManager:
-    emulator: DeSmuME
+    emulators: List[DeSmuMEWrapper]
     window: DeSmuME_SDL_Window
     frame: int
     input_queue: Queue
+    renderer: GlfwRenderer
+    texture_ids: List[int]
 
     def __init__(self, rom_path: Path, save_path: Optional[Path] = None):
         assert (os.path.exists(rom_path), f"ROM file '{rom_path}' not found.")
@@ -32,12 +67,10 @@ class PyDeSmuMEManager:
             f"ROM file '{rom_path}' has not supported file type.",
         )
 
-        self.emulator = DeSmuME()
-        self.emulator.open(str(rom_path))
-        self.emulator.volume_set(0)
-
-        if save_path:
-            self.__load_save(save_path)
+        self.emulators = [
+            DeSmuMEWrapper(rom_path, save_path),
+            # DeSmuMEWrapper(rom_path, save_path),
+        ]
 
         self.frame = 0
         self.input_queue = Queue()
@@ -45,7 +78,10 @@ class PyDeSmuMEManager:
         imgui.create_context()
         self.window = glfw_init("PyShinyHunter")
         self.renderer = GlfwRenderer(self.window)
-        self.texture_id = opengl_create_texture(256, 384)
+        self.texture_ids = [
+            opengl_create_texture(256, 384),
+            # opengl_create_texture(256, 384),
+        ]
 
     def __del__(self):
         self.renderer.shutdown()
@@ -62,20 +98,20 @@ class PyDeSmuMEManager:
         gl.glClearColor(0.1, 0.1, 0.1, 1)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
-        with imgui.begin("DeSmuME"):
-            imgui.image(self.texture_id, 256, 384)  # Adjust size as needed
+        for texture_id in self.texture_ids:
+            with imgui.begin("DeSmuME"):
+                imgui.image(texture_id, 256, 384)
 
         with imgui.begin("Encounter Info"):
             imgui.separator()
             for encounter, count in encounters.items():
                 imgui.text(f"{encounter}: {count}")
 
-        self.__emulator_process_inputs()
-        self.__emulator_next_frame()
+        self.__emulators_process_inputs()
+        self.__emulators_next_frame()
 
-        opengl_update_texture(
-            np.array(self.emulator.screenshot().convert("RGBA")), self.texture_id
-        )
+        opengl_update_texture(self.emulators[0].take_screenshot(), self.texture_ids[0])
+        # opengl_update_texture(self.emulators[1].take_screenshot(), self.texture_ids[1])
 
         imgui.render()
         self.renderer.render(imgui.get_draw_data())
@@ -83,51 +119,46 @@ class PyDeSmuMEManager:
 
         return True
 
+    def get_emulators(self) -> List[DeSmuMEWrapper]:
+        return self.emulators
+
     def get_screens(self) -> Tuple[np.ndarray, np.ndarray]:
-        screenshot = self.emulator.screenshot().convert("RGB")
-        screen = np.array(screenshot)[:, :, ::-1].copy()
-        top_screen = screen[: int(screen.shape[0] / 2)]
-        bottom_screen = screen[int(screen.shape[0] / 2) :]
-        return (top_screen, bottom_screen)
+        return self.emulators[0].get_screens()
 
     def get_frame_number(self) -> int:
         return self.frame
 
-    def add_input_to_queue(self, action_type: str, **kwargs):
-        self.input_queue.put({"type": action_type, "params": kwargs})
+    def add_input_to_queue(self, emulator_id: int, action_type: str, **kwargs):
+        self.input_queue.put(
+            {"emulator_id": emulator_id, "type": action_type, "params": kwargs}
+        )
 
-    def __emulator_process_inputs(self):
-        self.emulator.input.keypad_rm_key(Keys.KEY_NONE)
-        self.emulator.input.touch_release()
+    def __emulators_process_inputs(self):
+        for emulator in self.emulators:
+            emulator.emulator.input.keypad_rm_key(Keys.KEY_NONE)
+            emulator.emulator.input.touch_release()
 
         while not self.input_queue.empty():
             action = self.input_queue.get()
+            emulator_id = action["emulator_id"]
             action_type = action["type"]
             params = action["params"]
 
             if action_type == "key":
                 key = params.get("key")
                 if key:
-                    self.emulator.input.keypad_add_key(keymask(getattr(Keys, key)))
+                    self.emulators[emulator_id].emulator.input.keypad_add_key(
+                        keymask(getattr(Keys, key))
+                    )
             elif action_type == "touch":
                 x = params.get("x")
                 y = params.get("y")
                 if x is not None and y is not None:
-                    self.emulator.input.touch_set_pos(x, y)
+                    self.emulators[emulator_id].emulator.input.touch_set_pos(x, y)
             elif action_type == "release_touch":
-                self.emulator.input.touch_release()
+                self.emulators[emulator_id].emulator.input.touch_release()
 
-    def __emulator_next_frame(self):
-        self.emulator.cycle()
+    def __emulators_next_frame(self):
+        for emulator in self.emulators:
+            emulator.emulator.cycle()
         self.frame += 1
-
-    def __load_save(self, save_path: Path) -> None:
-        if os.path.exists(save_path):
-            if save_path.suffix == ".sav":
-                logger.error('NDS memory ".sav" files are not yet handled.')
-            elif save_path.suffix == ".dst":
-                self.emulator.savestate.load_file(str(save_path))
-                logger.info(f"Loaded save file: {save_path}")
-        else:
-            logger.warning(f"Save file '{save_path}' not found. Starting a new game.")
-            logger.warning(f"Save file '{save_path}' not found. Starting a new game.")
