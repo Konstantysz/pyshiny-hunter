@@ -12,6 +12,7 @@ from desmume.controls import Keys, keymask
 from desmume.emulator import DeSmuME, DeSmuME_SDL_Window
 from imgui.integrations.glfw import GlfwRenderer
 
+from pyshiny_hunter import config
 from pyshiny_hunter.module_logger import logger
 from pyshiny_hunter.utils.gui_utils import (
     glfw_init,
@@ -78,7 +79,9 @@ class PyDeSmuMEManager:
             self.__load_save(save_path)
 
         if randomize_start:
-            random_frame = random.randrange(0, 8192)  # nosec B311 - Not used for security
+            random_frame = random.randrange(
+                0, config.SHINY_ODDS_DENOMINATOR
+            )  # nosec B311 - Not used for security
             for _ in range(random_frame):
                 self.emulator.cycle()
             print(f"Randomized start frame: {random_frame}")
@@ -117,9 +120,10 @@ class PyDeSmuMEManager:
             imgui.text(f"FPS: {1 / imgui.get_io().delta_time:.2f}")
             imgui.separator()
             imgui.text(f"Encounters: {sum([encounters[key] for key in encounters])}")
-            imgui.text(f"Shiny odds: {1.0/8192.0 * 100.0:.3f}%")
+            shiny_odds = 1.0 / config.SHINY_ODDS_DENOMINATOR
+            imgui.text(f"Shiny odds: {shiny_odds * 100.0:.3f}%")
             imgui.text(
-                f"At least one shiny probability: {(1 - (1 - 1.0/8192.0) ** len(encounters.items())):.3f}%"
+                f"At least one shiny probability: {(1 - (1 - shiny_odds) ** len(encounters.items())):.3f}%"
             )
             imgui.separator()
             for encounter, count in encounters.items():

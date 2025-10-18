@@ -6,14 +6,9 @@ import cv2 as cv
 import numpy as np
 import pytesseract
 
+from pyshiny_hunter import config
 from pyshiny_hunter.hunter import Hunter
 from pyshiny_hunter.module_logger import logger
-
-# Computer Vision thresholds (empirically determined)
-POKEBALL_LIGHT_PIXEL_THRESHOLD: int = 230  # Brightness threshold for shiny sparkles
-WHITE_SCREEN_AVERAGE_PIXEL_VALUE: int = 247  # Avg pixel value for white flash detection
-POKEBALL_RELEASE_AVERAGE_PIXEL_VALUE: int = 30  # Avg pixel during Pokeball release
-BATTLE_BOTTOM_SCREEN_AVERAGE_PIXEL_VALUE: int = 55  # Avg pixel when battle UI visible
 
 
 class Black2Hunter(Hunter):
@@ -52,9 +47,11 @@ class Black2Hunter(Hunter):
         Hunter.__init__(self, hunted_pokemon)
 
         self.pokemon_database = dict()
-        for gen_file in ["gen1.csv", "gen2.csv", "gen3.csv", "gen4.csv", "gen5.csv"]:
+        for gen_file in config.POKEMON_CSV_FILES:
             try:
-                with open(f"resources/pokemon_names/{gen_file}", "r", encoding="utf-8") as file:
+                with open(
+                    f"{config.POKEMON_DATABASE_PATH}{gen_file}", "r", encoding="utf-8"
+                ) as file:
                     next(file)  # Skip the first line of the file as it is header.
                     self.pokemon_database.update(
                         (
@@ -99,8 +96,8 @@ class Black2Hunter(Hunter):
         top_screen_average_pixel = int(np.sum(top_screen) / top_screen.size)
         bottom_screen_average_pixel = int(np.sum(bottom_screen) / bottom_screen.size)
         return (
-            top_screen_average_pixel > WHITE_SCREEN_AVERAGE_PIXEL_VALUE
-            and bottom_screen_average_pixel > WHITE_SCREEN_AVERAGE_PIXEL_VALUE
+            top_screen_average_pixel > config.WHITE_SCREEN_AVERAGE_PIXEL_VALUE
+            and bottom_screen_average_pixel > config.WHITE_SCREEN_AVERAGE_PIXEL_VALUE
         )
 
     def _checked_shiny(self, top_screen: np.ndarray, bottom_screen: np.ndarray) -> bool:
@@ -126,24 +123,25 @@ class Black2Hunter(Hunter):
             - 20% threshold empirically determined for reliability
         """
         bottom_avg = int(np.sum(bottom_screen) / bottom_screen.size)
-        if bottom_avg > POKEBALL_RELEASE_AVERAGE_PIXEL_VALUE:
+        if bottom_avg > config.POKEBALL_RELEASE_AVERAGE_PIXEL_VALUE:
             return False
 
-        AVERAGE_PIXEL_THRESHOLD = 20.0
         screen_height, screen_width, _ = top_screen.shape
         pixels_above_threshold = (
             np.sum(
                 top_screen[
-                    0 : int(2 * screen_height / 3),
-                    int(screen_width / 3) : int(2 * screen_width / 3),
+                    0 : int(config.SPARKLE_REGION_HEIGHT_FRACTION * screen_height),
+                    int(config.SPARKLE_REGION_WIDTH_START_FRACTION * screen_width) : int(
+                        config.SPARKLE_REGION_WIDTH_END_FRACTION * screen_width
+                    ),
                 ]
-                > POKEBALL_LIGHT_PIXEL_THRESHOLD
+                > config.POKEBALL_LIGHT_PIXEL_THRESHOLD
             )
             / (top_screen.size / 3)
             * 100.0
         )
 
-        if pixels_above_threshold < AVERAGE_PIXEL_THRESHOLD:
+        if pixels_above_threshold < config.SPARKLE_PIXEL_PERCENTAGE_THRESHOLD:
             return False
 
         self.__determine_encounter(top_screen)
@@ -164,7 +162,7 @@ class Black2Hunter(Hunter):
             True if battle started (avg pixel value >55), False otherwise.
         """
         avg_pixel = int(np.sum(bottom_screen) / bottom_screen.size)
-        return avg_pixel > BATTLE_BOTTOM_SCREEN_AVERAGE_PIXEL_VALUE
+        return avg_pixel > config.BATTLE_BOTTOM_SCREEN_AVERAGE_PIXEL_VALUE
 
     def _is_pokemon_shiny(self, wild_pokemon_animation_length: int) -> bool:
         """Determine if Pokemon is shiny based on animation frame count.
@@ -182,8 +180,7 @@ class Black2Hunter(Hunter):
         Note:
             ~95% accuracy. Threshold empirically determined through testing.
         """
-        SHINY_FRAME_COUNT: int = 500
-        return wild_pokemon_animation_length > SHINY_FRAME_COUNT
+        return wild_pokemon_animation_length > config.SHINY_ANIMATION_FRAME_THRESHOLD
 
     def __determine_encounter(self, top_screen: np.ndarray) -> str:
         """Identify encountered Pokemon using OCR and fuzzy matching.
@@ -212,12 +209,22 @@ class Black2Hunter(Hunter):
             - Character whitelist improves accuracy by ~15%
             - Fuzzy matching handles OCR errors (e.g., "Rlo1u" → "Riolu")
         """
-        cropped_region = top_screen[30:40, 10:75]
-        resized_region = cv.resize(cropped_region, (0, 0), fx=3.0, fy=3.0)
+        cropped_region = top_screen[
+            config.OCR_NAME_REGION_Y_START : config.OCR_NAME_REGION_Y_END,
+            config.OCR_NAME_REGION_X_START : config.OCR_NAME_REGION_X_END,
+        ]
+        resized_region = cv.resize(
+            cropped_region, (0, 0), fx=config.OCR_RESIZE_FACTOR, fy=config.OCR_RESIZE_FACTOR
+        )
         gray_region = cv.cvtColor(resized_region, cv.COLOR_BGR2GRAY)
-        _, thresholded_region = cv.threshold(gray_region, 127, 255, cv.THRESH_BINARY)
+        _, thresholded_region = cv.threshold(
+            gray_region,
+            config.OCR_BINARY_THRESHOLD,
+            config.OCR_BINARY_MAX_VALUE,
+            cv.THRESH_BINARY,
+        )
         tesseract_config = (
-            f'--psm 7 -c tessedit_char_whitelist="{self.characters_in_pokemon_names}"'
+            f'--psm {config.TESSERACT_PSM_MODE} -c tessedit_char_whitelist="{self.characters_in_pokemon_names}"'
         )
         raw_name = pytesseract.image_to_string(thresholded_region, config=tesseract_config).strip()
 
@@ -240,7 +247,12 @@ class Black2Hunter(Hunter):
                 self.encounters[encounter_name] = 1
             return encounter_name
 
-        probable_matches = get_close_matches(encounter_name, self.pokemon_database, n=1, cutoff=0.6)
+        probable_matches = get_close_matches(
+            encounter_name,
+            self.pokemon_database,
+            n=config.FUZZY_MATCH_TOP_N,
+            cutoff=config.FUZZY_MATCH_CUTOFF,
+        )
         if probable_matches:
             corrected_name = probable_matches[0]
             if corrected_name in self.encounters.keys():
