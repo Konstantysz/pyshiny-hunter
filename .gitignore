@@ -1,8 +1,22 @@
+# IDE settings
 .vscode/
+
+# Data and output directories
 data/
 output/
-resources/
-roms/
+
+# Resources - selectively ignore
+resources/black2/
+# resources/pokemon_names/ is INCLUDED (legal CSV data)
+
+# ROMs and save files (NEVER commit - Nintendo copyright)
+roms/*.nds
+roms/*.gba
+roms/*.nds.gz
+roms/saves/
+roms/states/
+# Keep directory structure
+!roms/.gitkeep
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -178,3 +192,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# ImGui configuration (user-specific)
+imgui.ini
+
+# Internal development notes (not for public repo)
+docs/development/
+
+# Claude
+.claude/

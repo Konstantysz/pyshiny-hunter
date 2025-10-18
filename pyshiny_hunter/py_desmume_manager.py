@@ -1,4 +1,5 @@
 import os
+import random
 from pathlib import Path
 from queue import Queue
 from typing import Dict, List, Optional, Tuple
@@ -60,23 +61,36 @@ class PyDeSmuMEManager:
     renderer: GlfwRenderer
     texture_ids: List[int]
 
-    def __init__(self, rom_path: Path, save_path: Optional[Path] = None):
+    def __init__(
+        self,
+        rom_path: Path,
+        save_path: Optional[Path] = None,
+        randomize_start: bool = False,
+    ):
         assert (os.path.exists(rom_path), f"ROM file '{rom_path}' not found.")
         assert (
             rom_path.suffix == ".nds",
             f"ROM file '{rom_path}' has not supported file type.",
         )
 
-        self.emulators = [
-            DeSmuMEWrapper(rom_path, save_path),
-            # DeSmuMEWrapper(rom_path, save_path),
-        ]
+        self.emulator = DeSmuME()
+        self.emulator.open(str(rom_path))
+        self.emulator.volume_set(0)
+
+        if save_path:
+            self.__load_save(save_path)
+
+        if randomize_start:
+            random_frame = random.randrange(0, 8192)
+            for _ in range(random_frame):
+                self.emulator.cycle()
+            print(f"Randomized start frame: {random_frame}")
 
         self.frame = 0
         self.input_queue = Queue()
 
         imgui.create_context()
-        self.window = glfw_init("PyShinyHunter")
+        self.window = glfw_init("PyShinyHunter", 300, 700)
         self.renderer = GlfwRenderer(self.window)
         self.texture_ids = [
             opengl_create_texture(256, 384),
@@ -103,6 +117,13 @@ class PyDeSmuMEManager:
                 imgui.image(texture_id, 256, 384)
 
         with imgui.begin("Encounter Info"):
+            imgui.text(f"FPS: {1 / imgui.get_io().delta_time:.2f}")
+            imgui.separator()
+            imgui.text(f"Encounters: {sum([encounters[key] for key in encounters])}")
+            imgui.text(f"Shiny odds: {1.0/8192.0 * 100.0:.3f}%")
+            imgui.text(
+                f"At least one shiny probability: {(1 - (1 - 1.0/8192.0) ** len(encounters.items())):.3f}%"
+            )
             imgui.separator()
             for encounter, count in encounters.items():
                 imgui.text(f"{encounter}: {count}")
@@ -162,3 +183,13 @@ class PyDeSmuMEManager:
         for emulator in self.emulators:
             emulator.emulator.cycle()
         self.frame += 1
+
+    def __load_save(self, save_path: Path) -> None:
+        if os.path.exists(save_path):
+            if save_path.suffix == ".sav":
+                logger.error('NDS memory ".sav" files are not yet handled.')
+            elif save_path.suffix == ".dst":
+                self.emulator.savestate.load_file(str(save_path))
+                logger.info(f"Loaded save file: {save_path}")
+        else:
+            logger.warning(f"Save file '{save_path}' not found. Starting a new game.")
