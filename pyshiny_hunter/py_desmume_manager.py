@@ -67,11 +67,8 @@ class PyDeSmuMEManager:
         save_path: Optional[Path] = None,
         randomize_start: bool = False,
     ):
-        assert (os.path.exists(rom_path), f"ROM file '{rom_path}' not found.")
-        assert (
-            rom_path.suffix == ".nds",
-            f"ROM file '{rom_path}' has not supported file type.",
-        )
+        assert os.path.exists(rom_path), f"ROM file '{rom_path}' not found."
+        assert rom_path.suffix == ".nds", f"ROM file '{rom_path}' has not supported file type."
 
         self.emulator = DeSmuME()
         self.emulator.open(str(rom_path))
@@ -81,7 +78,7 @@ class PyDeSmuMEManager:
             self.__load_save(save_path)
 
         if randomize_start:
-            random_frame = random.randrange(0, 8192)
+            random_frame = random.randrange(0, 8192)  # nosec B311 - Not used for security
             for _ in range(random_frame):
                 self.emulator.cycle()
             print(f"Randomized start frame: {random_frame}")
@@ -150,9 +147,7 @@ class PyDeSmuMEManager:
         return self.frame
 
     def add_input_to_queue(self, emulator_id: int, action_type: str, **kwargs):
-        self.input_queue.put(
-            {"emulator_id": emulator_id, "type": action_type, "params": kwargs}
-        )
+        self.input_queue.put({"emulator_id": emulator_id, "type": action_type, "params": kwargs})
 
     def __emulators_process_inputs(self):
         for emulator in self.emulators:

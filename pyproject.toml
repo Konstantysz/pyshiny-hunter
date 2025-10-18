@@ -137,3 +137,9 @@ exclude = '''
 [tool.bandit]
 exclude_dirs = ["tests", "venv", ".venv"]
 skips = ["B101"]  # Skip assert_used check (needed for tests)
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+exclude = ["scripts/", "tests/", "venv/", ".venv/"]
