@@ -26,6 +26,7 @@ class DeSmuMEWrapper:
         self.emulator = DeSmuME()
         self.emulator.open(str(rom_path))
         self.emulator.volume_set(0)
+        self.frame = 0  # Track frame count for this emulator
 
         if save_path:
             self.__load_save(save_path)
@@ -67,41 +68,70 @@ class PyDeSmuMEManager:
         rom_path: Path,
         save_path: Optional[Path] = None,
         randomize_start: bool = False,
+        num_emulators: int = 1,  # Changed from 2 to 1 - py-desmume doesn't support multiple instances
+        headless: bool = False,  # NEW: Run without GUI (for multi-process workers)
     ):
         assert os.path.exists(rom_path), f"ROM file '{rom_path}' not found."
         assert rom_path.suffix == ".nds", f"ROM file '{rom_path}' has not supported file type."
+        assert num_emulators > 0, "num_emulators must be at least 1"
+        # WARNING: py-desmume library doesn't support multiple DeSmuME() instances in same process
+        # To run multiple emulators, launch multiple Python processes instead
+        if num_emulators > 1:
+            logger.warning(
+                f"num_emulators={num_emulators} requested, but py-desmume doesn't support "
+                "multiple instances. Using 1 emulator. To run multiple, launch multiple processes."
+            )
+            num_emulators = 1
 
-        self.emulator = DeSmuME()
-        self.emulator.open(str(rom_path))
-        self.emulator.volume_set(0)
+        self.headless = headless
 
-        if save_path:
-            self.__load_save(save_path)
+        # Initialize list of emulator wrappers
+        self.emulators = []
+        for i in range(num_emulators):
+            wrapper = DeSmuMEWrapper(rom_path, save_path)
 
-        if randomize_start:
-            random_frame = random.randrange(
-                0, config.SHINY_ODDS_DENOMINATOR
-            )  # nosec B311 - Not used for security
-            for _ in range(random_frame):
-                self.emulator.cycle()
-            print(f"Randomized start frame: {random_frame}")
+            # Apply randomize_start if requested
+            if randomize_start:
+                random_frame = random.randrange(
+                    0, config.SHINY_ODDS_DENOMINATOR
+                )  # nosec B311 - Not used for security
+                for _ in range(random_frame):
+                    wrapper.emulator.cycle()
+                print(f"Emulator {i}: Randomized start frame: {random_frame}")
+
+            self.emulators.append(wrapper)
 
         self.frame = 0
         self.input_queue = Queue()
 
-        imgui.create_context()
-        self.window = glfw_init("PyShinyHunter", 300, 700)
-        self.renderer = GlfwRenderer(self.window)
-        self.texture_ids = [
-            opengl_create_texture(256, 384),
-            # opengl_create_texture(256, 384),
-        ]
+        # Only initialize GUI if not headless
+        if not headless:
+            imgui.create_context()
+            # Window width scales with number of emulators
+            window_width = 300 * num_emulators
+            self.window = glfw_init("PyShinyHunter", window_width, 700)
+            self.renderer = GlfwRenderer(self.window)
+
+            # Create texture for each emulator
+            self.texture_ids = [opengl_create_texture(256, 384) for _ in range(num_emulators)]
+        else:
+            self.window = None
+            self.renderer = None
+            self.texture_ids = []
 
     def __del__(self):
-        self.renderer.shutdown()
-        glfw.terminate()
+        if not self.headless and self.renderer:
+            self.renderer.shutdown()
+            glfw.terminate()
 
     def update_frame(self, encounters: Dict[str, int]) -> bool:
+        # Headless mode - just process emulator logic, no GUI
+        if self.headless:
+            self.__emulators_process_inputs()
+            self.__emulators_next_frame()
+            return True
+
+        # Normal mode with GUI
         if glfw.window_should_close(self.window):
             return False
 
@@ -132,8 +162,9 @@ class PyDeSmuMEManager:
         self.__emulators_process_inputs()
         self.__emulators_next_frame()
 
-        opengl_update_texture(self.emulators[0].take_screenshot(), self.texture_ids[0])
-        # opengl_update_texture(self.emulators[1].take_screenshot(), self.texture_ids[1])
+        # Update textures for all emulators
+        for i, emulator in enumerate(self.emulators):
+            opengl_update_texture(emulator.take_screenshot(), self.texture_ids[i])
 
         imgui.render()
         self.renderer.render(imgui.get_draw_data())
@@ -181,14 +212,5 @@ class PyDeSmuMEManager:
     def __emulators_next_frame(self):
         for emulator in self.emulators:
             emulator.emulator.cycle()
-        self.frame += 1
-
-    def __load_save(self, save_path: Path) -> None:
-        if os.path.exists(save_path):
-            if save_path.suffix == ".sav":
-                logger.error('NDS memory ".sav" files are not yet handled.')
-            elif save_path.suffix == ".dst":
-                self.emulator.savestate.load_file(str(save_path))
-                logger.info(f"Loaded save file: {save_path}")
-        else:
-            logger.warning(f"Save file '{save_path}' not found. Starting a new game.")
+            emulator.frame += 1  # Track frame count per emulator
+        self.frame += 1  # Track global frame count

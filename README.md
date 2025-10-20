@@ -17,6 +17,7 @@ PyShiny Hunter is a Computer Vision-based automation tool for shiny Pokémon hun
 - 🎮 **DeSmuME Integration** - Direct emulator control via py-desmume bindings
 - 🖼️ **Real-time GUI** - ImGui-based monitoring interface for live progress
 - ⚙️ **State Machine Architecture** - Clean, extensible design for future game support
+- 🚀 **Multi-Process Mode** - Run multiple emulators simultaneously with unified GUI (NEW!)
 
 ## 🛠️ Tech Stack
 
@@ -60,6 +61,8 @@ pip install -e .
 
 ### Usage
 
+#### Single Mode (Default)
+
 ```bash
 # Run with ROM and save state
 pyshiny-hunter path/to/pokemon_black2.nds --state path/to/savestate.dst
@@ -68,13 +71,29 @@ pyshiny-hunter path/to/pokemon_black2.nds --state path/to/savestate.dst
 python scripts/py_desmume_hunter.py path/to/rom.nds --state savestate.dst
 ```
 
+#### Multi-Process Mode (NEW!)
+
+Run multiple emulators with a unified GUI displaying all streams:
+
+```bash
+# 2 workers
+python scripts/py_desmume_hunter.py roms/black2.nds --state savestate.dst --num-workers 2
+
+# 4 workers with randomized starts
+python scripts/py_desmume_hunter.py roms/black2.nds --state savestate.dst --num-workers 4 --randomize-start
+```
+
+Each worker runs in a separate process, displaying live video feeds side-by-side in a single GUI window. See [UNIFIED_GUI.md](docs/UNIFIED_GUI.md) for details.
+
 ### Command-Line Options
 
-| Option | Description | Required |
-|--------|-------------|----------|
-| `rom` | Path to `.nds` ROM file | ✅ Yes |
-| `--state` | Path to `.dst` save state file | ❌ Optional |
-| `--sav` | Path to `.sav` save file | ❌ Optional |
+| Option              | Description                               | Required    |
+| ------------------- | ----------------------------------------- | ----------- |
+| `rom`               | Path to `.nds` ROM file                   | ✅ Yes      |
+| `--state`           | Path to `.dst` save state file            | ❌ Optional |
+| `--sav`             | Path to `.sav` save file                  | ❌ Optional |
+| `--num-workers`     | Number of emulator processes (default: 1) | ❌ Optional |
+| `--randomize-start` | Randomize starting frame for each worker  | ❌ Optional |
 
 ## 🎮 How It Works
 
