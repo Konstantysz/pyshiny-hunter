@@ -49,6 +49,10 @@ docs = [
     "sphinx>=7.0.0",
     "sphinx-rtd-theme>=1.3.0",
 ]
+examples = [
+    "jupyter>=1.0.0",
+    "matplotlib>=3.7.0",
+]
 
 [project.scripts]
 pyshiny-hunter = "pyshiny_hunter.cli:main"

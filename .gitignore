@@ -4,6 +4,8 @@
 # Data and output directories
 data/
 output/
+analysis_output/
+analysis_timeline.png
 
 # Resources - selectively ignore
 resources/black2/
