@@ -32,7 +32,10 @@ class DeSmuMEWrapper:
             self.__load_save(save_path)
 
     def step(self):
-        # Obsługa wejść i przejście do następnej klatki
+        """Handle inputs and advance to next frame.
+
+        Note: Currently a placeholder. Input handling is managed by the manager.
+        """
         pass
 
     def take_screenshot(self) -> np.ndarray:
@@ -71,9 +74,14 @@ class PyDeSmuMEManager:
         num_emulators: int = 1,  # Changed from 2 to 1 - py-desmume doesn't support multiple instances
         headless: bool = False,  # NEW: Run without GUI (for multi-process workers)
     ):
-        assert os.path.exists(rom_path), f"ROM file '{rom_path}' not found."
-        assert rom_path.suffix == ".nds", f"ROM file '{rom_path}' has not supported file type."
-        assert num_emulators > 0, "num_emulators must be at least 1"
+        # Input validation
+        if not os.path.exists(rom_path):
+            raise FileNotFoundError(f"ROM file '{rom_path}' not found")
+        if rom_path.suffix != ".nds":
+            raise ValueError(f"Unsupported ROM file type: '{rom_path.suffix}' (expected .nds)")
+        if num_emulators < 1:
+            raise ValueError(f"num_emulators must be at least 1, got {num_emulators}")
+
         # WARNING: py-desmume library doesn't support multiple DeSmuME() instances in same process
         # To run multiple emulators, launch multiple Python processes instead
         if num_emulators > 1:

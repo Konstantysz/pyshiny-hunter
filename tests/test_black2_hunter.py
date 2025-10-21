@@ -1,10 +1,8 @@
 """Tests for Black2Hunter class."""
 
-import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
-import pytest
 
 from pyshiny_hunter.black2_hunter import Black2Hunter
 
