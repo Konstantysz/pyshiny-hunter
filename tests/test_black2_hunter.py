@@ -113,9 +113,7 @@ class TestCheckedShiny:
         """Test shiny check returns True when sparkle pixels detected."""
         monkeypatch.chdir(mock_pokemon_csv_files)
         hunter = Black2Hunter()
-        with patch.object(
-            hunter, "_Black2Hunter__determine_encounter", return_value="Pikachu"
-        ):
+        with patch.object(hunter, "_Black2Hunter__determine_encounter", return_value="Pikachu"):
             result = hunter._checked_shiny(shiny_sparkle_screen, dark_bottom_screen)
             assert result is True
 

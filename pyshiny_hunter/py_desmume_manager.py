@@ -2,7 +2,7 @@ import os
 import random
 from pathlib import Path
 from queue import Queue
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 import glfw
 import imgui
@@ -41,7 +41,7 @@ class DeSmuMEWrapper:
     def take_screenshot(self) -> np.ndarray:
         return np.array(self.emulator.screenshot().convert("RGBA"))
 
-    def get_screens(self) -> Tuple[np.ndarray, np.ndarray]:
+    def get_screens(self) -> tuple[np.ndarray, np.ndarray]:
         screen = self.take_screenshot()[:, :, ::-1].copy()
         top_screen = screen[: int(screen.shape[0] / 2), :, 1:]
         bottom_screen = screen[int(screen.shape[0] / 2) :, :, 1:]
@@ -59,12 +59,12 @@ class DeSmuMEWrapper:
 
 
 class PyDeSmuMEManager:
-    emulators: List[DeSmuMEWrapper]
+    emulators: list[DeSmuMEWrapper]
     window: DeSmuME_SDL_Window
     frame: int
     input_queue: Queue
     renderer: GlfwRenderer
-    texture_ids: List[int]
+    texture_ids: list[int]
 
     def __init__(
         self,
@@ -132,7 +132,7 @@ class PyDeSmuMEManager:
             self.renderer.shutdown()
             glfw.terminate()
 
-    def update_frame(self, encounters: Dict[str, int]) -> bool:
+    def update_frame(self, encounters: dict[str, int]) -> bool:
         # Headless mode - just process emulator logic, no GUI
         if self.headless:
             self.__emulators_process_inputs()
@@ -180,10 +180,10 @@ class PyDeSmuMEManager:
 
         return True
 
-    def get_emulators(self) -> List[DeSmuMEWrapper]:
+    def get_emulators(self) -> list[DeSmuMEWrapper]:
         return self.emulators
 
-    def get_screens(self) -> Tuple[np.ndarray, np.ndarray]:
+    def get_screens(self) -> tuple[np.ndarray, np.ndarray]:
         return self.emulators[0].get_screens()
 
     def get_frame_number(self) -> int:

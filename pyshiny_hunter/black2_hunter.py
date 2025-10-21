@@ -1,6 +1,6 @@
 import re
 from difflib import get_close_matches
-from typing import List, Optional
+from typing import Optional
 
 import cv2 as cv
 import numpy as np
@@ -31,7 +31,7 @@ class Black2Hunter(Hunter):
 
     characters_in_pokemon_names: str
 
-    def __init__(self, hunted_pokemon: Optional[List[str] | str] = None):
+    def __init__(self, hunted_pokemon: Optional[list[str] | str] = None):
         """Initialize Black2Hunter with Pokemon database and character whitelist.
 
         Loads Pokemon names from Gen 1-5 CSV files and creates a character whitelist
@@ -46,12 +46,10 @@ class Black2Hunter(Hunter):
         """
         Hunter.__init__(self, hunted_pokemon)
 
-        self.pokemon_database = dict()
+        self.pokemon_database = {}
         for gen_file in config.POKEMON_CSV_FILES:
             try:
-                with open(
-                    f"{config.POKEMON_DATABASE_PATH}{gen_file}", "r", encoding="utf-8"
-                ) as file:
+                with open(f"{config.POKEMON_DATABASE_PATH}{gen_file}", encoding="utf-8") as file:
                     next(file)  # Skip the first line of the file as it is header.
                     self.pokemon_database.update(
                         (
@@ -242,9 +240,7 @@ class Black2Hunter(Hunter):
         # STEP 4: Run Tesseract OCR with character whitelist
         # --psm 7 = treat image as single line of text
         # Character whitelist reduces false positives by ~15% (e.g., "0" vs "O")
-        tesseract_config = (
-            f'--psm {config.TESSERACT_PSM_MODE} -c tessedit_char_whitelist="{self.characters_in_pokemon_names}"'
-        )
+        tesseract_config = f'--psm {config.TESSERACT_PSM_MODE} -c tessedit_char_whitelist="{self.characters_in_pokemon_names}"'
         raw_name = pytesseract.image_to_string(thresholded_region, config=tesseract_config).strip()
 
         # STEP 5: Post-process OCR output to Title Case

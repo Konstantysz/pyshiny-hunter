@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from typing import Dict, List, Optional
+from typing import Optional
 
 import numpy as np
 from statemachine import State, StateMachine
@@ -51,7 +51,7 @@ class Hunter(StateMachine, metaclass=HunterMeta):
         >>> hunter.send("searching_pokemon", top_screen, bottom_screen)
     """
 
-    encounters: Dict[str, int]
+    encounters: dict[str, int]
 
     search = State("Searching for shiny Pokemon...", initial=True)
     check_if_shiny = State("Checking if Pokemon is shiny")
@@ -72,14 +72,14 @@ class Hunter(StateMachine, metaclass=HunterMeta):
         search, unless="_is_pokemon_shiny"
     )
 
-    def __init__(self, hunted_pokemon: Optional[List[str] | str] = None):
+    def __init__(self, hunted_pokemon: Optional[list[str] | str] = None):
         """Initialize Hunter with empty encounter tracker.
 
         Args:
             hunted_pokemon: Optional Pokemon name(s) to hunt for. Reserved for
                 future use (currently unused). Can be a single string or list.
         """
-        self.encounters = dict()
+        self.encounters = {}
         super().__init__()
 
     @abstractmethod
@@ -149,7 +149,7 @@ class Hunter(StateMachine, metaclass=HunterMeta):
         """
         pass
 
-    def get_encounters(self) -> Dict[str, int]:
+    def get_encounters(self) -> dict[str, int]:
         """Get dictionary of encountered Pokemon and their counts.
 
         Returns:
