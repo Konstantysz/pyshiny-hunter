@@ -33,7 +33,7 @@ def glfw_init(
 
 def opengl_create_texture(width: int, height: int) -> int:
     """Create OpenGL texture for rendering."""
-    texture_id = gl.glGenTextures(1)
+    texture_id: int = int(gl.glGenTextures(1))
     gl.glBindTexture(gl.GL_TEXTURE_2D, texture_id)
     gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
     gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)

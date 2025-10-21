@@ -7,6 +7,9 @@ output/
 analysis_output/
 analysis_timeline.png
 
+# Allow screenshots in docs/images/
+!docs/images/*.png
+
 # Resources - selectively ignore
 resources/black2/
 # resources/pokemon_names/ is INCLUDED (legal CSV data)

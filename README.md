@@ -9,6 +9,12 @@
 
 PyShiny Hunter is a Computer Vision-based automation tool for shiny Pokémon hunting in Pokémon Black 2 using the DeSmuME emulator. It combines image processing, OCR, and state machine patterns to detect and identify shiny Pokémon encounters automatically.
 
+## 📸 GUI Preview
+
+![PyShiny Hunter GUI](docs/images/pyshiny-hunter-gui.png)
+
+*Multi-process mode with 4 workers running simultaneously. Each worker shows live emulator feed with real-time statistics.*
+
 ## ✨ Features
 
 - 🎯 **Automated Shiny Detection** - Identifies shiny Pokémon through animation analysis and sparkle detection
@@ -17,7 +23,8 @@ PyShiny Hunter is a Computer Vision-based automation tool for shiny Pokémon hun
 - 🎮 **DeSmuME Integration** - Direct emulator control via py-desmume bindings
 - 🖼️ **Real-time GUI** - ImGui-based monitoring interface for live progress
 - ⚙️ **State Machine Architecture** - Clean, extensible design for future game support
-- 🚀 **Multi-Process Mode** - Run multiple emulators simultaneously with unified GUI (NEW!)
+- 🚀 **Multi-Process Mode** - Run multiple emulators simultaneously with unified GUI
+- 📈 **Centralized Statistics** - Real-time encounter tracking and shiny logging across all workers
 
 ## 🛠️ Tech Stack
 
@@ -66,24 +73,55 @@ pip install -e .
 ```bash
 # Run with ROM and save state
 pyshiny-hunter path/to/pokemon_black2.nds --state path/to/savestate.dst
-
-# Or use the script directly
-python scripts/py_desmume_hunter.py path/to/rom.nds --state savestate.dst
 ```
 
-#### Multi-Process Mode (NEW!)
+#### Multi-Process Mode
 
 Run multiple emulators with a unified GUI displaying all streams:
 
 ```bash
 # 2 workers
-python scripts/py_desmume_hunter.py roms/black2.nds --state savestate.dst --num-workers 2
+pyshiny-hunter roms/black2.nds --state savestate.dst --num-workers 2
 
 # 4 workers with randomized starts
-python scripts/py_desmume_hunter.py roms/black2.nds --state savestate.dst --num-workers 4 --randomize-start
+pyshiny-hunter roms/black2.nds --state savestate.dst --num-workers 4 --randomize-start
 ```
 
-Each worker runs in a separate process, displaying live video feeds side-by-side in a single GUI window. See [UNIFIED_GUI.md](docs/UNIFIED_GUI.md) for details.
+Each worker runs in a separate process with live video feeds displayed in a unified GUI window. Features include:
+
+- **Live Video Streaming** - Real-time 60 FPS feeds from all workers
+- **Aggregate Statistics** - Total encounters, shiny probability, encounters/min across all workers
+- **Centralized Shiny Log** - Instant notifications when any worker finds a shiny
+- **Per-Worker Stats** - Individual encounter counts and Pokemon breakdown
+
+See [docs/UNIFIED_GUI.md](docs/UNIFIED_GUI.md) for detailed architecture and troubleshooting.
+
+### GUI Features
+
+**Professional Horizontal Layout:**
+- **Video Left, Stats Right** - Each worker panel displays emulator feed (256×384) on the left with statistics column on the right
+- **Color-Coded Status** - Green = Running, Red = Stalled (no updates for >2 seconds)
+- **Real-Time Updates** - 60 FPS video streaming with live frame counts and encounter tracking
+- **Compact Information** - Shows up to 5 Pokemon encounters per worker with counts
+
+**Window Management:**
+- **Auto-Maximized** - Window automatically maximizes on startup for optimal viewing
+- **Responsive Sizing** - Layout adapts to window resize and different screen resolutions
+- **Grid Layout** - Workers arranged in optimal grid (1×1, 2×2, 2×3, 3×3, 3×4, etc.)
+- **Fixed Sidebar** - Aggregate stats (top) and shiny log (bottom) always visible on right
+
+**Aggregate Statistics Panel:**
+- Total encounters across all workers
+- Shiny probability calculation
+- Encounters per minute
+- Per-Pokemon breakdown (e.g., Watchog: 89, Patrat: 45)
+- Worker contribution leaderboard
+
+**Shiny Log Panel:**
+- Last 5 shinies found with timestamps
+- Worker ID and frame difference
+- Save file location
+- Total encounters at discovery time
 
 ### Command-Line Options
 
@@ -99,7 +137,7 @@ Each worker runs in a separate process, displaying live video feeds side-by-side
 
 ### Computer Vision Pipeline
 
-```
+```text
 Game Screen Capture (60 FPS)
     ↓
 Region Extraction (Pokémon name area)
@@ -124,25 +162,30 @@ Pokémon Identified
 
 ### State Flow
 
-```
+```text
 Search → Check Shiny → Pre-Battle → Battle → Found/Reset
 ```
 
 ## 📊 Project Structure
 
-```
+```text
 pyshiny-hunter/
-├── pyshiny_hunter/          # Main package
-│   ├── hunter.py            # Abstract hunter base class
-│   ├── black2_hunter.py     # Black 2 implementation
-│   ├── py_desmume_manager.py  # Emulator integration
-│   └── utils/               # Utilities
-├── scripts/                 # Entry point scripts
-├── tests/                   # Test suite (pytest)
+├── pyshiny_hunter/             # Main package
+│   ├── hunter.py               # Abstract hunter base class
+│   ├── black2_hunter.py        # Black 2 CV implementation
+│   ├── py_desmume_manager.py   # Emulator integration
+│   ├── cli.py                  # CLI entry point
+│   ├── worker_process.py       # Headless worker processes
+│   ├── gui_process.py          # Unified GUI rendering
+│   ├── single_mode.py          # Single-emulator mode
+│   ├── config.py               # Centralized configuration
+│   └── utils/                  # Utilities & helpers
+├── tests/                      # Test suite (26 tests, 91% coverage)
+├── examples/                   # Jupyter notebooks & data exploration
 ├── resources/
-│   └── pokemon_names/       # Pokémon database (Gen 1-9)
-├── docs/                    # Documentation
-└── .github/workflows/       # CI/CD
+│   └── pokemon_names/          # Pokémon database (Gen 1-9)
+├── docs/                       # Documentation
+└── .github/workflows/          # CI/CD (multi-OS, multi-Python)
 ```
 
 ## ⚖️ Legal Notice
@@ -212,7 +255,9 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
 ## 📚 Documentation
 
 - **[Contributing Guide](CONTRIBUTING.md)** - Development guidelines and workflow
+- **[Unified GUI Architecture](docs/UNIFIED_GUI.md)** - Multi-process mode details and troubleshooting
 - **[Legal Notice](docs/LEGAL.md)** - Copyright policy and ROM requirements
+- **[Data Exploration Notebook](examples/data_exploration_and_algorithm_design.ipynb)** - Algorithm design and validation
 
 ## 🐛 Troubleshooting
 
@@ -241,6 +286,18 @@ pip install -e .
 ## 📝 License
 
 This project is licensed under the MIT License - see [LICENSE.md](LICENSE.md) for details.
+
+## 🎯 Project Highlights
+
+**Production-Ready Features:**
+
+- ✅ **91% Test Coverage** - Comprehensive pytest suite with 26 tests
+- ✅ **Multi-Platform CI/CD** - GitHub Actions (Ubuntu/Windows × Python 3.9-3.12)
+- ✅ **Clean Architecture** - Modular design with separation of concerns
+- ✅ **Type Safety** - MyPy type checking throughout codebase
+- ✅ **Code Quality** - Ruff linting, Black formatting, pre-commit hooks
+- ✅ **Data-Driven** - Algorithm validation with 1,934 real-world frames
+- ✅ **Professional Documentation** - Architecture diagrams, API docs, inline comments
 
 ## 🙏 Acknowledgments
 

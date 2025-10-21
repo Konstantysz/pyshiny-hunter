@@ -17,11 +17,7 @@ from imgui.integrations.glfw import GlfwRenderer
 
 from pyshiny_hunter import config
 from pyshiny_hunter.module_logger import logger
-from pyshiny_hunter.utils.gui_utils import (
-    glfw_init,
-    opengl_create_texture,
-    opengl_update_texture,
-)
+from pyshiny_hunter.utils.gui_utils import glfw_init, opengl_create_texture, opengl_update_texture
 
 
 def unified_gui_main_process(
@@ -42,10 +38,33 @@ def unified_gui_main_process(
     """
     logger.info(f"[Main GUI] Initializing unified GUI for {num_workers} workers...")
 
+    # Calculate optimal grid layout
+    # For 1-2 workers: 1 row
+    # For 3-4 workers: 2 rows, 2 cols
+    # For 5-6 workers: 2 rows, 3 cols
+    # For 7-9 workers: 3 rows, 3 cols
+    # For 10-12 workers: 3 rows, 4 cols
+    import math
+
+    cols = min(4, max(1, math.ceil(math.sqrt(num_workers))))
+    rows = math.ceil(num_workers / cols)
+
+    # Calculate window size based on grid layout
+    # Each worker panel: video (256px) + stats column (150px) + padding
+    worker_panel_width = 256 + 150 + 20  # Video + stats + padding = 426px
+    worker_panel_height = 384 + 30  # Video height + header/padding = 414px
+    sidebar_width = 350  # For aggregate stats and shiny log
+    window_width = (worker_panel_width * cols) + sidebar_width + 40  # Add padding
+    window_height = max(600, (worker_panel_height * rows) + 100)
+
+    logger.info(
+        f"[Main GUI] Layout: {rows} rows × {cols} cols = {num_workers} workers "
+        f"(window: {window_width}×{window_height})"
+    )
+
     # Initialize ImGui
     imgui.create_context()
-    window_width = 280 * num_workers  # Fit all workers side-by-side
-    window = glfw_init("PyShiny Hunter - Multi Mode", window_width, 550)
+    window = glfw_init("PyShiny Hunter - Multi Mode", window_width, window_height)
     renderer = GlfwRenderer(window)
 
     # Create textures for each worker
@@ -65,10 +84,16 @@ def unified_gui_main_process(
 
     logger.info("[Main GUI] GUI initialized, starting render loop...")
 
+    # Maximize window on startup for better fullscreen experience
+    glfw.maximize_window(window)
+
     try:
         while not glfw.window_should_close(window):
             glfw.poll_events()
             renderer.process_inputs()
+
+            # Get current window size (handles maximization/resize)
+            current_width, current_height = glfw.get_window_size(window)
 
             # Process all available screenshot updates from workers
             updates_processed = 0
@@ -102,37 +127,90 @@ def unified_gui_main_process(
             gl.glClearColor(0.1, 0.1, 0.1, 1)
             gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
-            # Display each worker in its own panel
-            for worker_id in range(num_workers):
-                state = worker_states[worker_id]
+            # Main window with grid layout for workers (uses actual window size)
+            workers_width = current_width - sidebar_width
+            imgui.set_next_window_position(0, 0)
+            imgui.set_next_window_size(workers_width, current_height)
+            with imgui.begin(
+                "Workers",
+                flags=imgui.WINDOW_NO_TITLE_BAR
+                | imgui.WINDOW_NO_RESIZE
+                | imgui.WINDOW_NO_MOVE
+                | imgui.WINDOW_NO_COLLAPSE,
+            ):
+                # Display workers in a grid layout
+                for worker_id in range(num_workers):
+                    state = worker_states[worker_id]
 
-                with imgui.begin(f"Worker {worker_id}"):
-                    # Display emulator screen
+                    # Calculate grid position
+                    col = worker_id % cols
+
+                    # Start new row if needed (imgui.same_line() keeps on same row)
+                    if col > 0:
+                        imgui.same_line()
+
+                    # Worker panel with fixed size - horizontal layout
+                    imgui.begin_child(
+                        f"worker_{worker_id}",
+                        worker_panel_width - 10,
+                        worker_panel_height - 10,
+                        border=True,
+                    )
+
+                    # Left side: Video feed
+                    imgui.begin_child(f"video_{worker_id}", 256, 384, border=False)
                     imgui.image(texture_ids[worker_id], 256, 384)
+                    imgui.end_child()
 
-                    # Display stats
+                    # Right side: Stats (next to video)
+                    imgui.same_line()
+                    imgui.begin_child(f"stats_{worker_id}", 150, 384, border=False)
+
+                    # Worker header
+                    imgui.text(f"Worker {worker_id}")
                     imgui.separator()
-                    imgui.text(f"State: {state['state']}")
-                    imgui.text(f"Frame: {state['frame']}")
-                    imgui.text(f"Total Encounters: {state['total_encounters']}")
 
-                    # Check if worker is alive
+                    # Status indicator
                     time_since_update = time.time() - state["last_update"]
                     if time_since_update > 2.0:
-                        imgui.text_colored("Status: STALLED", 1.0, 0.0, 0.0)
+                        imgui.text_colored("STALLED", 1.0, 0.0, 0.0)
                     else:
-                        imgui.text_colored("Status: Running", 0.0, 1.0, 0.0)
+                        imgui.text_colored("Running", 0.0, 1.0, 0.0)
 
                     imgui.separator()
+
+                    # State and frame info
+                    imgui.text("State:")
+                    imgui.text_wrapped(state["state"])
+                    imgui.spacing()
+
+                    imgui.text("Frame:")
+                    imgui.text(f"{state['frame']}")
+                    imgui.spacing()
+
+                    imgui.text("Encounters:")
+                    imgui.text(f"{state['total_encounters']}")
+                    imgui.spacing()
 
                     # Show encounter breakdown
                     if state["encounters"]:
-                        imgui.text("Encounters:")
-                        for pokemon, count in state["encounters"].items():
-                            imgui.text(f"  {pokemon}: {count}")
+                        imgui.separator()
+                        imgui.text("Pokemon:")
+                        for pokemon, count in list(state["encounters"].items())[:5]:
+                            imgui.text(f"{pokemon}: {count}")
+                        if len(state["encounters"]) > 5:
+                            imgui.text_colored("...", 0.5, 0.5, 0.5)
 
-            # Aggregate stats panel (ENHANCED with shared encounter stats)
-            with imgui.begin("Aggregate Stats"):
+                    imgui.end_child()
+                    imgui.end_child()
+
+            # Sidebar with Aggregate Stats and Shiny Log (uses actual window size)
+            imgui.set_next_window_position(current_width - sidebar_width, 0)
+            imgui.set_next_window_size(sidebar_width, current_height // 2)
+            with imgui.begin(
+                "Aggregate Stats",
+                flags=imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE,
+            ):
                 # Use shared encounter stats instead of per-worker sum
                 total_encounters = encounter_stats.get("total_encounters", 0)
                 imgui.text(f"Total Encounters (All Workers): {total_encounters}")
@@ -146,7 +224,7 @@ def unified_gui_main_process(
                 # Probability of at least one shiny across all encounters
                 if total_encounters > 0:
                     prob_at_least_one = (1 - (1 - shiny_odds) ** total_encounters) * 100
-                    imgui.text(f"Probability of ≥1 shiny: {prob_at_least_one:.2f}%")
+                    imgui.text(f"Probability of at least one shiny: {prob_at_least_one:.2f}%")
 
                 imgui.separator()
 
@@ -188,8 +266,13 @@ def unified_gui_main_process(
                 else:
                     imgui.text_colored("  No contributions yet...", 0.7, 0.7, 0.7)
 
-            # Shiny Log panel
-            with imgui.begin("Shiny Log"):
+            # Shiny Log panel (bottom half of sidebar, uses actual window size)
+            imgui.set_next_window_position(current_width - sidebar_width, current_height // 2)
+            imgui.set_next_window_size(sidebar_width, current_height // 2)
+            with imgui.begin(
+                "Shiny Log",
+                flags=imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE,
+            ):
                 imgui.text(f"Shinies Found: {len(shiny_log)}")
                 imgui.separator()
 
