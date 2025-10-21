@@ -13,7 +13,7 @@ PyShiny Hunter is a Computer Vision-based automation tool for shiny Pokémon hun
 
 ![PyShiny Hunter GUI](docs/images/pyshiny-hunter-gui.png)
 
-*Multi-process mode with 4 workers running simultaneously. Each worker shows live emulator feed with real-time statistics.*
+_Multi-process mode with 4 workers running simultaneously. Each worker shows live emulator feed with real-time statistics._
 
 ## ✨ Features
 
@@ -71,7 +71,13 @@ pip install -e .
 #### Single Mode (Default)
 
 ```bash
-# Run with ROM and save state
+# Run with ROM and battery save (.sav)
+pyshiny-hunter path/to/pokemon_black2.nds --state path/to/save.sav
+
+# Or with DeSmuME battery save (.dsv)
+pyshiny-hunter path/to/pokemon_black2.nds --state path/to/save.dsv
+
+# Or with savestate (.dst)
 pyshiny-hunter path/to/pokemon_black2.nds --state path/to/savestate.dst
 ```
 
@@ -80,11 +86,11 @@ pyshiny-hunter path/to/pokemon_black2.nds --state path/to/savestate.dst
 Run multiple emulators with a unified GUI displaying all streams:
 
 ```bash
-# 2 workers
-pyshiny-hunter roms/black2.nds --state savestate.dst --num-workers 2
+# 2 workers with battery save
+pyshiny-hunter roms/black2.nds --state save.sav --num-workers 2
 
 # 4 workers with randomized starts
-pyshiny-hunter roms/black2.nds --state savestate.dst --num-workers 4 --randomize-start
+pyshiny-hunter roms/black2.nds --state save.sav --num-workers 4 --randomize-start
 ```
 
 Each worker runs in a separate process with live video feeds displayed in a unified GUI window. Features include:
@@ -99,18 +105,21 @@ See [docs/UNIFIED_GUI.md](docs/UNIFIED_GUI.md) for detailed architecture and tro
 ### GUI Features
 
 **Professional Horizontal Layout:**
+
 - **Video Left, Stats Right** - Each worker panel displays emulator feed (256×384) on the left with statistics column on the right
 - **Color-Coded Status** - Green = Running, Red = Stalled (no updates for >2 seconds)
 - **Real-Time Updates** - 60 FPS video streaming with live frame counts and encounter tracking
 - **Compact Information** - Shows up to 5 Pokemon encounters per worker with counts
 
 **Window Management:**
+
 - **Auto-Maximized** - Window automatically maximizes on startup for optimal viewing
 - **Responsive Sizing** - Layout adapts to window resize and different screen resolutions
 - **Grid Layout** - Workers arranged in optimal grid (1×1, 2×2, 2×3, 3×3, 3×4, etc.)
 - **Fixed Sidebar** - Aggregate stats (top) and shiny log (bottom) always visible on right
 
 **Aggregate Statistics Panel:**
+
 - Total encounters across all workers
 - Shiny probability calculation
 - Encounters per minute
@@ -118,6 +127,7 @@ See [docs/UNIFIED_GUI.md](docs/UNIFIED_GUI.md) for detailed architecture and tro
 - Worker contribution leaderboard
 
 **Shiny Log Panel:**
+
 - Last 5 shinies found with timestamps
 - Worker ID and frame difference
 - Save file location
@@ -128,10 +138,17 @@ See [docs/UNIFIED_GUI.md](docs/UNIFIED_GUI.md) for detailed architecture and tro
 | Option              | Description                               | Required    |
 | ------------------- | ----------------------------------------- | ----------- |
 | `rom`               | Path to `.nds` ROM file                   | ✅ Yes      |
-| `--state`           | Path to `.dst` save state file            | ❌ Optional |
-| `--sav`             | Path to `.sav` save file                  | ❌ Optional |
+| `--state`           | Path to save file (`.sav`, `.dsv`, `.dst`)| ❌ Optional |
 | `--num-workers`     | Number of emulator processes (default: 1) | ❌ Optional |
 | `--randomize-start` | Randomize starting frame for each worker  | ❌ Optional |
+
+**Supported save file formats:**
+
+- ✅ `.sav` - Raw SRAM battery saves (imported programmatically)
+- ✅ `.dsv` - DeSmuME battery saves (imported programmatically)
+- ✅ `.dst` - DeSmuME savestates (loaded after ROM opens)
+
+All formats are now fully supported via the backup import API!
 
 ## 🎮 How It Works
 

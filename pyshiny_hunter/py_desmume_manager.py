@@ -14,22 +14,37 @@ from imgui.integrations.glfw import GlfwRenderer
 
 from pyshiny_hunter import config
 from pyshiny_hunter.module_logger import logger
-from pyshiny_hunter.utils.gui_utils import (
-    glfw_init,
-    opengl_create_texture,
-    opengl_update_texture,
-)
+from pyshiny_hunter.utils.gui_utils import glfw_init, opengl_create_texture, opengl_update_texture
 
 
 class DeSmuMEWrapper:
     def __init__(self, rom_path: Path, save_path: Optional[Path] = None):
+        self.rom_path = rom_path
         self.emulator = DeSmuME()
+        self.savestate_to_load: Optional[Path] = None
+        self.backup_to_import: Optional[Path] = None
+
+        # Prepare save files
+        if save_path:
+            self.__prepare_save(save_path)
+
+        # Open ROM
         self.emulator.open(str(rom_path))
         self.emulator.volume_set(0)
         self.frame = 0  # Track frame count for this emulator
 
-        if save_path:
-            self.__load_save(save_path)
+        # Load savestate AFTER opening ROM (if one was provided)
+        if self.savestate_to_load:
+            self.emulator.savestate.load_file(str(self.savestate_to_load))
+            logger.info(f"Loaded savestate: {self.savestate_to_load}")
+
+        # Import battery save AFTER opening ROM (if one was provided)
+        if self.backup_to_import:
+            success = self.emulator.backup.import_file(str(self.backup_to_import))
+            if success:
+                logger.info(f"Imported battery save: {self.backup_to_import}")
+            else:
+                logger.error(f"Failed to import battery save: {self.backup_to_import}")
 
     def step(self):
         """Handle inputs and advance to next frame.
@@ -47,15 +62,37 @@ class DeSmuMEWrapper:
         bottom_screen = screen[int(screen.shape[0] / 2) :, :, 1:]
         return (top_screen, bottom_screen)
 
-    def __load_save(self, save_path: Path) -> None:
-        if os.path.exists(save_path):
-            if save_path.suffix == ".sav":
-                logger.error('NDS memory ".sav" files are not yet handled.')
-            elif save_path.suffix == ".dst":
-                self.emulator.savestate.load_file(str(save_path))
-                logger.info(f"Loaded save file: {save_path}")
-        else:
+    def __prepare_save(self, save_path: Path) -> None:
+        """Prepare a save file for loading (battery save or savestate).
+
+        Supports:
+        - .sav files (raw SRAM) - imported via emulator.backup.import_file()
+        - .dsv files (DeSmuME) - imported via emulator.backup.import_file()
+        - .dst files (savestates) - loaded via emulator.savestate.load_file()
+
+        Args:
+            save_path: Path to the save file to load
+        """
+        if not os.path.exists(save_path):
             logger.warning(f"Save file '{save_path}' not found. Starting a new game.")
+            return
+
+        if save_path.suffix == ".dst":
+            # Savestates loaded AFTER opening ROM
+            self.savestate_to_load = save_path
+            logger.info(f"Savestate will be loaded after ROM opens: {save_path}")
+            return
+
+        # For .sav and .dsv files, import AFTER opening ROM using backup API
+        if save_path.suffix in [".sav", ".dsv"]:
+            self.backup_to_import = save_path
+            logger.info(f"Battery save will be imported after ROM opens: {save_path}")
+            return
+
+        logger.error(
+            f"Unsupported save file format: {save_path.suffix}. "
+            "Supported formats: .sav (raw SRAM), .dsv (DeSmuME), .dst (savestate)"
+        )
 
 
 class PyDeSmuMEManager:
@@ -100,9 +137,7 @@ class PyDeSmuMEManager:
 
             # Apply randomize_start if requested
             if randomize_start:
-                random_frame = random.randrange(
-                    0, config.SHINY_ODDS_DENOMINATOR
-                )  # nosec B311 - Not used for security
+                random_frame = random.randrange(0, 512)  # nosec B311 - Not used for security
                 for _ in range(random_frame):
                     wrapper.emulator.cycle()
                 print(f"Emulator {i}: Randomized start frame: {random_frame}")
