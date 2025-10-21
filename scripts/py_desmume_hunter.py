@@ -11,6 +11,8 @@ Architecture (Multi-mode):
 """
 
 import argparse
+import datetime
+import json
 import multiprocessing as mp
 import sys
 import time
@@ -108,6 +110,8 @@ def headless_worker(
     randomize_start: bool,
     screenshot_queue: mp.Queue,
     control_queue: mp.Queue,
+    shiny_log: list,
+    encounter_stats: dict,
 ):
     """Headless worker process running emulator and streaming screenshots.
 
@@ -118,6 +122,8 @@ def headless_worker(
         randomize_start: Whether to randomize starting frame
         screenshot_queue: Queue for sending screenshots to main GUI
         control_queue: Queue for receiving control commands (future use)
+        shiny_log: Shared list for centralized shiny logging
+        encounter_stats: Shared dict for aggregate encounter statistics
     """
     try:
         print(f"[Worker {worker_id}] Starting headless emulator...")
@@ -135,9 +141,40 @@ def headless_worker(
         print(f"[Worker {worker_id}] Initialized, starting main loop...")
 
         frame_count = 0
+        last_encounters = {}  # Track last known encounter dict for change detection
+
         while manager.update_frame(hunter.get_encounters()):
             emulator = manager.get_emulators()[0]
             top_screen, bottom_screen = emulator.get_screens()
+
+            # Update shared encounter stats when new encounters detected
+            current_encounters = hunter.get_encounters()
+            for pokemon, count in current_encounters.items():
+                last_count = last_encounters.get(pokemon, 0)
+                if count > last_count:
+                    # New encounter(s) of this pokemon!
+                    new_encounters = count - last_count
+
+                    # Update total encounters
+                    encounter_stats["total_encounters"] = (
+                        encounter_stats.get("total_encounters", 0) + new_encounters
+                    )
+
+                    # Update per-Pokemon counts
+                    if "pokemon_counts" not in encounter_stats:
+                        encounter_stats["pokemon_counts"] = {}
+                    pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
+                    pokemon_counts[pokemon] = pokemon_counts.get(pokemon, 0) + new_encounters
+                    encounter_stats["pokemon_counts"] = pokemon_counts
+
+                    # Update worker contribution
+                    if "worker_contributions" not in encounter_stats:
+                        encounter_stats["worker_contributions"] = {}
+                    worker_contribs = dict(encounter_stats.get("worker_contributions", {}))
+                    worker_contribs[worker_id] = sum(current_encounters.values())
+                    encounter_stats["worker_contributions"] = worker_contribs
+
+            last_encounters = dict(current_encounters)
 
             # State machine logic
             if hunter.current_state.id == "search":
@@ -171,6 +208,18 @@ def headless_worker(
                     save_name = f"roms/states/black2/shiny_worker{worker_id}_{battle_ready_frame - battle_start_frame}.dst"
                     emulator.emulator.savestate.save_file(save_name)
                     print(f"[Worker {worker_id}] Saved to: {save_name}")
+
+                    # Log to centralized shiny log
+                    shiny_entry = {
+                        "worker_id": worker_id,
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "frame_diff": battle_ready_frame - battle_start_frame,
+                        "save_file": save_name,
+                        "total_encounters": sum(hunter.get_encounters().values()),
+                        "encounters": dict(hunter.get_encounters()),
+                    }
+                    shiny_log.append(shiny_entry)
+                    print(f"[Worker {worker_id}] Logged to centralized shiny log")
                 else:
                     manager.add_input_to_queue(0, "touch", x=128, y=180)
 
@@ -214,6 +263,8 @@ def unified_gui_main_process(
     num_workers: int,
     screenshot_queue: mp.Queue,
     control_queues: list,
+    shiny_log: list,
+    encounter_stats: dict,
 ):
     """Main GUI process displaying all worker streams.
 
@@ -221,6 +272,8 @@ def unified_gui_main_process(
         num_workers: Number of worker processes
         screenshot_queue: Queue receiving screenshots from workers
         control_queues: Queues for sending commands to workers (future use)
+        shiny_log: Shared list for centralized shiny logging
+        encounter_stats: Shared dict for aggregate encounter statistics
     """
     print(f"[Main GUI] Initializing unified GUI for {num_workers} workers...")
 
@@ -313,9 +366,10 @@ def unified_gui_main_process(
                         for pokemon, count in state["encounters"].items():
                             imgui.text(f"  {pokemon}: {count}")
 
-            # Aggregate stats panel
+            # Aggregate stats panel (ENHANCED with shared encounter stats)
             with imgui.begin("Aggregate Stats"):
-                total_encounters = sum(s["total_encounters"] for s in worker_states.values())
+                # Use shared encounter stats instead of per-worker sum
+                total_encounters = encounter_stats.get("total_encounters", 0)
                 imgui.text(f"Total Encounters (All Workers): {total_encounters}")
 
                 imgui.separator()
@@ -330,7 +384,82 @@ def unified_gui_main_process(
                     imgui.text(f"Probability of ≥1 shiny: {prob_at_least_one:.2f}%")
 
                 imgui.separator()
+
+                # Encounters per minute
+                start_time_str = encounter_stats.get("start_time")
+                if start_time_str and total_encounters > 0:
+                    start_time = datetime.datetime.fromisoformat(start_time_str)
+                    elapsed_minutes = (datetime.datetime.now() - start_time).total_seconds() / 60.0
+                    if elapsed_minutes > 0:
+                        encounters_per_min = total_encounters / elapsed_minutes
+                        imgui.text(f"Encounters/min: {encounters_per_min:.1f}")
+
+                imgui.separator()
                 imgui.text(f"FPS: {1 / imgui.get_io().delta_time:.1f}")
+
+                imgui.separator()
+
+                # Per-Pokemon breakdown (from shared stats)
+                imgui.text("Pokemon Breakdown:")
+                pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
+                if pokemon_counts:
+                    for pokemon, count in sorted(
+                        pokemon_counts.items(), key=lambda x: x[1], reverse=True
+                    ):
+                        imgui.text(f"  {pokemon}: {count}")
+                else:
+                    imgui.text_colored("  No encounters yet...", 0.7, 0.7, 0.7)
+
+                imgui.separator()
+
+                # Worker contributions
+                imgui.text("Worker Contributions:")
+                worker_contribs = dict(encounter_stats.get("worker_contributions", {}))
+                if worker_contribs and total_encounters > 0:
+                    for worker_id in sorted(worker_contribs.keys()):
+                        count = worker_contribs[worker_id]
+                        percentage = (count / total_encounters * 100) if total_encounters > 0 else 0
+                        imgui.text(f"  Worker {worker_id}: {count} ({percentage:.1f}%)")
+                else:
+                    imgui.text_colored("  No contributions yet...", 0.7, 0.7, 0.7)
+
+            # Shiny Log panel
+            with imgui.begin("Shiny Log"):
+                imgui.text(f"Shinies Found: {len(shiny_log)}")
+                imgui.separator()
+
+                if len(shiny_log) == 0:
+                    imgui.text_colored("No shinies found yet...", 0.7, 0.7, 0.7)
+                else:
+                    # Display most recent first
+                    for i, entry in enumerate(reversed(list(shiny_log))):
+                        imgui.text(f"#{len(shiny_log) - i}:")
+                        imgui.text(f"  Worker: {entry['worker_id']}")
+
+                        # Format timestamp nicely
+                        timestamp = entry["timestamp"]
+                        if "T" in timestamp:
+                            timestamp = timestamp.split("T")[1].split(".")[0]  # Extract time only
+                        imgui.text(f"  Time: {timestamp}")
+
+                        imgui.text(f"  Frame Diff: {entry['frame_diff']}")
+                        imgui.text(f"  Total Encounters: {entry['total_encounters']}")
+
+                        # Truncate save file path for display
+                        save_file = entry["save_file"]
+                        if len(save_file) > 30:
+                            save_file = "..." + save_file[-27:]
+                        imgui.text(f"  Save: {save_file}")
+
+                        imgui.separator()
+
+                        # Limit display to last 5 shinies to avoid clutter
+                        if i >= 4:
+                            if len(shiny_log) > 5:
+                                imgui.text_colored(
+                                    f"... and {len(shiny_log) - 5} more", 0.5, 0.5, 0.5
+                                )
+                            break
 
             imgui.render()
             renderer.render(imgui.get_draw_data())
@@ -360,16 +489,37 @@ def launch_multi_mode(
     print(f"Randomize Start: {randomize_start}")
     print("=" * 60 + "\n")
 
-    # Create shared queues
+    # Create shared data structures
+    manager = mp.Manager()
     screenshot_queue = mp.Queue(maxsize=num_workers * 10)  # Buffer 10 frames per worker
     control_queues = [mp.Queue() for _ in range(num_workers)]
+
+    # Shared shiny log and encounter statistics
+    shiny_log = manager.list()
+    encounter_stats = manager.dict(
+        {
+            "total_encounters": 0,
+            "pokemon_counts": manager.dict(),
+            "worker_contributions": manager.dict(),
+            "start_time": datetime.datetime.now().isoformat(),
+        }
+    )
 
     # Launch worker processes
     processes = []
     for i in range(num_workers):
         p = mp.Process(
             target=headless_worker,
-            args=(i, rom_path, save_path, randomize_start, screenshot_queue, control_queues[i]),
+            args=(
+                i,
+                rom_path,
+                save_path,
+                randomize_start,
+                screenshot_queue,
+                control_queues[i],
+                shiny_log,
+                encounter_stats,
+            ),
         )
         p.start()
         processes.append(p)
@@ -380,7 +530,9 @@ def launch_multi_mode(
 
     try:
         # Run main GUI
-        unified_gui_main_process(num_workers, screenshot_queue, control_queues)
+        unified_gui_main_process(
+            num_workers, screenshot_queue, control_queues, shiny_log, encounter_stats
+        )
     except KeyboardInterrupt:
         print("\n🛑 Stopping all workers...")
     finally:
@@ -391,6 +543,30 @@ def launch_multi_mode(
         # Wait for cleanup
         for p in processes:
             p.join(timeout=5)
+
+        # Save shiny log to file
+        if len(shiny_log) > 0:
+            log_file = Path("shiny_log.json")
+            with open(log_file, "w") as f:
+                json.dump(list(shiny_log), f, indent=2)
+            print(f"\n💾 Saved shiny log to: {log_file} ({len(shiny_log)} entries)")
+
+        # Save encounter stats to file
+        if encounter_stats.get("total_encounters", 0) > 0:
+            stats_file = Path("encounter_stats.json")
+            stats_data = {
+                "total_encounters": encounter_stats.get("total_encounters", 0),
+                "pokemon_counts": dict(encounter_stats.get("pokemon_counts", {})),
+                "worker_contributions": {
+                    str(k): v for k, v in encounter_stats.get("worker_contributions", {}).items()
+                },
+                "start_time": encounter_stats.get("start_time"),
+                "end_time": datetime.datetime.now().isoformat(),
+            }
+
+            with open(stats_file, "w") as f:
+                json.dump(stats_data, f, indent=2)
+            print(f"💾 Saved encounter stats to: {stats_file}")
 
         print("\n👋 All workers stopped. Happy hunting!")
 
