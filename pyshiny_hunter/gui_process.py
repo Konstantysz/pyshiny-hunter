@@ -51,10 +51,10 @@ def unified_gui_main_process(
 
     # Calculate window size based on grid layout
     # Each worker panel: video (256px) + stats column (150px) + padding
-    worker_panel_width = 256 + 150 + 20  # Video + stats + padding = 426px
+    base_worker_panel_width = 256 + 150 + 20  # Video + stats + padding = 426px
     worker_panel_height = 384 + 30  # Video height + header/padding = 414px
     sidebar_width = 350  # For aggregate stats and shiny log
-    window_width = (worker_panel_width * cols) + sidebar_width + 40  # Add padding
+    window_width = (base_worker_panel_width * cols) + sidebar_width + 40  # Add padding
     window_height = max(600, (worker_panel_height * rows) + 100)
 
     logger.info(
@@ -80,6 +80,7 @@ def unified_gui_main_process(
             "frame": 0,
             "total_encounters": 0,
             "last_update": time.time(),
+            "fps": 0.0,
         }
 
     logger.info("[Main GUI] GUI initialized, starting render loop...")
@@ -111,6 +112,7 @@ def unified_gui_main_process(
                                 "frame": data["frame"],
                                 "total_encounters": data["total_encounters"],
                                 "last_update": time.time(),
+                                "fps": data.get("fps", 0.0),
                             }
                         )
 
@@ -129,6 +131,11 @@ def unified_gui_main_process(
 
             # Main window with grid layout for workers (uses actual window size)
             workers_width = current_width - sidebar_width
+
+            # Calculate dynamic worker panel width to fit in available space
+            available_width = workers_width - 20  # Account for padding
+            worker_panel_width = (available_width / cols) - 10  # Distribute evenly across columns
+
             imgui.set_next_window_position(0, 0)
             imgui.set_next_window_size(workers_width, current_height)
             with imgui.begin(
@@ -149,10 +156,10 @@ def unified_gui_main_process(
                     if col > 0:
                         imgui.same_line()
 
-                    # Worker panel with fixed size - horizontal layout
+                    # Worker panel with dynamic width - horizontal layout
                     imgui.begin_child(
                         f"worker_{worker_id}",
-                        worker_panel_width - 10,
+                        worker_panel_width,
                         worker_panel_height - 10,
                         border=True,
                     )
@@ -238,7 +245,24 @@ def unified_gui_main_process(
                         imgui.text(f"Encounters/min: {encounters_per_min:.1f}")
 
                 imgui.separator()
-                imgui.text(f"FPS: {1 / imgui.get_io().delta_time:.1f}")
+
+                # Calculate average FPS across all workers
+                worker_fps_values = [
+                    state["fps"] for state in worker_states.values() if state["fps"] > 0
+                ]
+                if worker_fps_values:
+                    avg_fps = sum(worker_fps_values) / len(worker_fps_values)
+                    imgui.text(f"Average Worker FPS: {avg_fps:.1f}")
+
+                    # Show individual FPS for each worker
+                    imgui.text("Worker FPS:")
+                    for worker_id in range(num_workers):
+                        fps = worker_states[worker_id]["fps"]
+                        imgui.text(f"  Worker {worker_id}: {fps:.1f}")
+                else:
+                    imgui.text("Average Worker FPS: calculating...")
+
+                imgui.text(f"GUI FPS: {1 / imgui.get_io().delta_time:.1f}")
 
                 imgui.separator()
 
@@ -252,19 +276,6 @@ def unified_gui_main_process(
                         imgui.text(f"  {pokemon}: {count}")
                 else:
                     imgui.text_colored("  No encounters yet...", 0.7, 0.7, 0.7)
-
-                imgui.separator()
-
-                # Worker contributions
-                imgui.text("Worker Contributions:")
-                worker_contribs = dict(encounter_stats.get("worker_contributions", {}))
-                if worker_contribs and total_encounters > 0:
-                    for worker_id in sorted(worker_contribs.keys()):
-                        count = worker_contribs[worker_id]
-                        percentage = (count / total_encounters * 100) if total_encounters > 0 else 0
-                        imgui.text(f"  Worker {worker_id}: {count} ({percentage:.1f}%)")
-                else:
-                    imgui.text_colored("  No contributions yet...", 0.7, 0.7, 0.7)
 
             # Shiny Log panel (bottom half of sidebar, uses actual window size)
             imgui.set_next_window_position(current_width - sidebar_width, current_height // 2)

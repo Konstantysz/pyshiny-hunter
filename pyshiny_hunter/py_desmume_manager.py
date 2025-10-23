@@ -1,5 +1,6 @@
 import os
 import random
+import time
 from pathlib import Path
 from queue import Queue
 from typing import Optional
@@ -28,6 +29,11 @@ class DeSmuMEWrapper:
         self.emulator.volume_set(0)
         self.frame = 0  # Track frame count for this emulator
 
+        # FPS tracking
+        self.fps = 0.0
+        self.fps_frame_count = 0
+        self.fps_last_time = None
+
         if save_path:
             self.__load_save(save_path)
 
@@ -37,6 +43,35 @@ class DeSmuMEWrapper:
         Note: Currently a placeholder. Input handling is managed by the manager.
         """
         pass
+
+    def update_fps(self):
+        """Update FPS calculation based on frame timing.
+
+        Calculates FPS over a 1-second window for smooth readings.
+        """
+        current_time = time.time()
+
+        if self.fps_last_time is None:
+            self.fps_last_time = current_time
+            self.fps_frame_count = 0
+            return
+
+        self.fps_frame_count += 1
+        time_diff = current_time - self.fps_last_time
+
+        # Update FPS every second
+        if time_diff >= 1.0:
+            self.fps = self.fps_frame_count / time_diff
+            self.fps_frame_count = 0
+            self.fps_last_time = current_time
+
+    def get_fps(self) -> float:
+        """Get current FPS of this emulator.
+
+        Returns:
+            Current FPS value (frames per second)
+        """
+        return self.fps
 
     def take_screenshot(self) -> np.ndarray:
         return np.array(self.emulator.screenshot().convert("RGBA"))
@@ -221,4 +256,5 @@ class PyDeSmuMEManager:
         for emulator in self.emulators:
             emulator.emulator.cycle()
             emulator.frame += 1  # Track frame count per emulator
+            emulator.update_fps()  # Update FPS tracking
         self.frame += 1  # Track global frame count

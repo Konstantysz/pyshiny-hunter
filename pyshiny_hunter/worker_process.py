@@ -152,6 +152,7 @@ def headless_worker(
                 "encounters": dict(hunter.get_encounters()),
                 "frame": emulator.frame,
                 "total_encounters": sum(hunter.get_encounters().values()),
+                "fps": emulator.get_fps(),
             }
 
             # Non-blocking put (drop frame if queue full to avoid backup)
