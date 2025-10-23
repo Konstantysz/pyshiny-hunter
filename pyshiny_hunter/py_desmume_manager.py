@@ -130,17 +130,22 @@ class PyDeSmuMEManager:
 
         # Initialize list of emulator wrappers
         self.emulators = []
-        for i in range(num_emulators):
+        for _ in range(num_emulators):
             wrapper = DeSmuMEWrapper(rom_path, save_path)
 
-            # Apply randomize_start if requested
-            if randomize_start:
-                random_frame = random.randrange(
-                    0, config.SHINY_ODDS_DENOMINATOR
+            # Note: For multi-process mode, RNG desync is applied in worker_process.py
+            # after emulator creation (can't be done here as each process has own memory)
+            # For single-process mode with randomize_start, apply offset here
+            if randomize_start and not headless:
+                # Single-process mode: simple random offset (no need for progressive)
+                random_offset = random.randrange(
+                    0, config.WORKER_RNG_JITTER_FRAMES * 10
                 )  # nosec B311 - Not used for security
-                for _ in range(random_frame):
+                for _ in range(random_offset):
                     wrapper.emulator.cycle()
-                print(f"Emulator {i}: Randomized start frame: {random_frame}")
+                logger.info(
+                    f"Single mode: Random offset {random_offset} frames ({random_offset/60:.2f}s)"
+                )
 
             self.emulators.append(wrapper)
 

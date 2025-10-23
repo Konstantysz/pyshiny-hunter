@@ -8,6 +8,7 @@ import datetime
 import multiprocessing as mp
 import time
 from queue import Empty
+from typing import Optional
 
 import glfw
 import imgui
@@ -26,6 +27,7 @@ def unified_gui_main_process(
     control_queues: list,
     shiny_log: list,
     encounter_stats: dict,
+    init_status: Optional[dict] = None,
 ):
     """Main GUI process displaying all worker streams.
 
@@ -35,6 +37,7 @@ def unified_gui_main_process(
         control_queues: Queues for sending commands to workers (future use)
         shiny_log: Shared list for centralized shiny logging
         encounter_stats: Shared dict for aggregate encounter statistics
+        init_status: Shared dict tracking worker initialization progress
     """
     logger.info(f"[Main GUI] Initializing unified GUI for {num_workers} workers...")
 
@@ -136,80 +139,158 @@ def unified_gui_main_process(
             available_width = workers_width - 20  # Account for padding
             worker_panel_width = (available_width / cols) - 10  # Distribute evenly across columns
 
+            # Check if all workers are ready (initialization complete)
+            # Workers are considered "ready" when they reach "waiting" or "ready" status
+            # "waiting" = finished desync, waiting at barrier for others
+            # "ready" = passed barrier, started main loop
+            all_workers_ready = False
+            if init_status is not None:
+                status_dict = dict(init_status)
+                # Count workers that are either waiting at barrier OR fully ready
+                workers_at_barrier_or_ready = sum(
+                    1 for s in status_dict.values() if s in ("waiting", "ready")
+                )
+                all_workers_ready = workers_at_barrier_or_ready == num_workers
+            else:
+                # No init tracking, assume ready immediately
+                all_workers_ready = True
+
             imgui.set_next_window_position(0, 0)
             imgui.set_next_window_size(workers_width, current_height)
-            with imgui.begin(
-                "Workers",
-                flags=imgui.WINDOW_NO_TITLE_BAR
-                | imgui.WINDOW_NO_RESIZE
-                | imgui.WINDOW_NO_MOVE
-                | imgui.WINDOW_NO_COLLAPSE,
-            ):
-                # Display workers in a grid layout
-                for worker_id in range(num_workers):
-                    state = worker_states[worker_id]
 
-                    # Calculate grid position
-                    col = worker_id % cols
+            # Allow resize during initialization, lock during normal operation
+            window_flags = (
+                imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE
+            )
+            if all_workers_ready:
+                window_flags |= imgui.WINDOW_NO_RESIZE
 
-                    # Start new row if needed (imgui.same_line() keeps on same row)
-                    if col > 0:
+            with imgui.begin("Workers", flags=window_flags):
+                if not all_workers_ready:
+                    # Show initialization progress instead of worker cards
+                    imgui.text("")
+                    imgui.text("")
+                    imgui.text("")
+                    imgui.text("")
+                    imgui.spacing()
+                    imgui.spacing()
+
+                    # Center the progress display
+                    imgui.set_cursor_pos_x(workers_width / 2 - 200)
+                    imgui.text("Initializing Emulators...")
+                    imgui.spacing()
+                    imgui.spacing()
+
+                    # Get current status (fresh read every frame)
+                    status_dict = dict(init_status) if init_status else {}
+
+                    # Count workers by status
+                    ready_count = sum(1 for s in status_dict.values() if s == "ready")
+                    waiting_count = sum(1 for s in status_dict.values() if s == "waiting")
+
+                    # Progress bar - count workers that finished desync (waiting + ready)
+                    finished_desync_count = waiting_count + ready_count
+                    progress = finished_desync_count / num_workers if num_workers > 0 else 0.0
+                    imgui.set_cursor_pos_x(workers_width / 2 - 200)
+                    imgui.progress_bar(progress, (400, 30))
+
+                    imgui.spacing()
+                    imgui.set_cursor_pos_x(workers_width / 2 - 200)
+                    imgui.text(f"Desynchronized: {finished_desync_count}/{num_workers}")
+
+                    imgui.spacing()
+                    imgui.spacing()
+
+                    # Show status for each worker
+                    imgui.set_cursor_pos_x(workers_width / 2 - 200)
+                    imgui.begin_child("worker_status", 400, 200, border=True)
+                    for worker_id in range(num_workers):
+                        status = status_dict.get(worker_id, "pending...")
+
+                        # Color-code status
+                        if status == "ready":
+                            imgui.text_colored(f"Worker {worker_id}: Ready", 0.0, 1.0, 0.0)
+                        elif status == "waiting":
+                            imgui.text_colored(
+                                f"Worker {worker_id}: Waiting for others...", 1.0, 1.0, 0.0
+                            )
+                        elif status == "desyncing":
+                            imgui.text_colored(
+                                f"Worker {worker_id}: Desyncing RNG...", 0.0, 0.5, 1.0
+                            )
+                        elif status == "loading":
+                            imgui.text_colored(
+                                f"Worker {worker_id}: Loading emulator...", 0.5, 0.5, 1.0
+                            )
+                        else:
+                            imgui.text(f"Worker {worker_id}: {status}")
+                    imgui.end_child()
+                else:
+                    # Show normal worker grid layout
+                    for worker_id in range(num_workers):
+                        state = worker_states[worker_id]
+
+                        # Calculate grid position
+                        col = worker_id % cols
+
+                        # Start new row if needed (imgui.same_line() keeps on same row)
+                        if col > 0:
+                            imgui.same_line()
+
+                        # Worker panel with dynamic width - horizontal layout
+                        imgui.begin_child(
+                            f"worker_{worker_id}",
+                            worker_panel_width,
+                            worker_panel_height - 10,
+                            border=True,
+                        )
+
+                        # Left side: Video feed
+                        imgui.begin_child(f"video_{worker_id}", 256, 384, border=False)
+                        imgui.image(texture_ids[worker_id], 256, 384)
+                        imgui.end_child()
+
+                        # Right side: Stats (next to video)
                         imgui.same_line()
+                        imgui.begin_child(f"stats_{worker_id}", 150, 384, border=False)
 
-                    # Worker panel with dynamic width - horizontal layout
-                    imgui.begin_child(
-                        f"worker_{worker_id}",
-                        worker_panel_width,
-                        worker_panel_height - 10,
-                        border=True,
-                    )
-
-                    # Left side: Video feed
-                    imgui.begin_child(f"video_{worker_id}", 256, 384, border=False)
-                    imgui.image(texture_ids[worker_id], 256, 384)
-                    imgui.end_child()
-
-                    # Right side: Stats (next to video)
-                    imgui.same_line()
-                    imgui.begin_child(f"stats_{worker_id}", 150, 384, border=False)
-
-                    # Worker header
-                    imgui.text(f"Worker {worker_id}")
-                    imgui.separator()
-
-                    # Status indicator
-                    time_since_update = time.time() - state["last_update"]
-                    if time_since_update > 2.0:
-                        imgui.text_colored("STALLED", 1.0, 0.0, 0.0)
-                    else:
-                        imgui.text_colored("Running", 0.0, 1.0, 0.0)
-
-                    imgui.separator()
-
-                    # State and frame info
-                    imgui.text("State:")
-                    imgui.text_wrapped(state["state"])
-                    imgui.spacing()
-
-                    imgui.text("Frame:")
-                    imgui.text(f"{state['frame']}")
-                    imgui.spacing()
-
-                    imgui.text("Encounters:")
-                    imgui.text(f"{state['total_encounters']}")
-                    imgui.spacing()
-
-                    # Show encounter breakdown
-                    if state["encounters"]:
+                        # Worker header
+                        imgui.text(f"Worker {worker_id}")
                         imgui.separator()
-                        imgui.text("Pokemon:")
-                        for pokemon, count in list(state["encounters"].items())[:5]:
-                            imgui.text(f"{pokemon}: {count}")
-                        if len(state["encounters"]) > 5:
-                            imgui.text_colored("...", 0.5, 0.5, 0.5)
 
-                    imgui.end_child()
-                    imgui.end_child()
+                        # Status indicator
+                        time_since_update = time.time() - state["last_update"]
+                        if time_since_update > 2.0:
+                            imgui.text_colored("STALLED", 1.0, 0.0, 0.0)
+                        else:
+                            imgui.text_colored("Running", 0.0, 1.0, 0.0)
+
+                        imgui.separator()
+
+                        # State and frame info
+                        imgui.text("State:")
+                        imgui.text_wrapped(state["state"])
+                        imgui.spacing()
+
+                        imgui.text("Frame:")
+                        imgui.text(f"{state['frame']}")
+                        imgui.spacing()
+
+                        imgui.text("Encounters:")
+                        imgui.text(f"{state['total_encounters']}")
+                        imgui.spacing()
+
+                        # Show encounter breakdown
+                        if state["encounters"]:
+                            imgui.separator()
+                            imgui.text("Pokemon:")
+                            for pokemon, count in list(state["encounters"].items())[:5]:
+                                imgui.text(f"{pokemon}: {count}")
+                            if len(state["encounters"]) > 5:
+                                imgui.text_colored("...", 0.5, 0.5, 0.5)
+
+                        imgui.end_child()
+                        imgui.end_child()
 
             # Sidebar with Aggregate Stats and Shiny Log (uses actual window size)
             imgui.set_next_window_position(current_width - sidebar_width, 0)

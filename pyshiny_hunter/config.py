@@ -92,3 +92,22 @@ SHINY_ODDS_DENOMINATOR: int = 8192
 SPARKLE_REGION_HEIGHT_FRACTION: float = 2.0 / 3.0  # Top 2/3 of screen
 SPARKLE_REGION_WIDTH_START_FRACTION: float = 1.0 / 3.0  # Middle third (horizontal)
 SPARKLE_REGION_WIDTH_END_FRACTION: float = 2.0 / 3.0
+
+# =============================================================================
+# Worker RNG Desynchronization
+# =============================================================================
+
+# DeSmuME has deterministic RNG: same savestate + same inputs = identical encounters
+# To guarantee unique RNG states across workers, we offset each worker by N frames
+# Hybrid approach: base offset (guarantees uniqueness) + random jitter (adds variety)
+
+# Base offset per worker (frames) - ensures no two workers share RNG state
+# 60 frames @ 60 FPS = 1 second per worker
+# Worker 0: 0 frames, Worker 1: 60 frames, Worker 2: 120 frames, etc.
+WORKER_RNG_BASE_OFFSET_FRAMES: int = 60
+
+# Random jitter range (frames) - adds variety while maintaining uniqueness guarantee
+# Each worker gets base + random(0, JITTER) offset
+# 30 frames @ 60 FPS = 0-0.5 seconds additional randomization
+# Example ranges: Worker 0: [0,30], Worker 1: [60,90], Worker 2: [120,150] (no overlap!)
+WORKER_RNG_JITTER_FRAMES: int = 30

@@ -3,11 +3,14 @@
 Entry point for running the shiny hunter from the command line.
 Supports both single-emulator and multi-process modes.
 
+Multi-worker mode automatically applies RNG desynchronization to ensure
+each worker has unique encounter sequences (prevents deterministic RNG issues).
+
 Example:
     Single mode:
         $ pyshiny-hunter roms/black2.nds --state savestate.dst
 
-    Multi-process mode:
+    Multi-process mode (auto RNG desync):
         $ pyshiny-hunter roms/black2.nds --state savestate.dst --num-workers 4
 """
 
@@ -49,15 +52,10 @@ def main() -> None:
         help="Path to the .dst save state file (optional)",
     )
     parser.add_argument(
-        "--randomize-start",
-        action="store_true",
-        help="Randomize start frame (for increased shiny odds variation)",
-    )
-    parser.add_argument(
         "--num-workers",
         type=int,
         default=1,
-        help="Number of worker processes (default: 1 = single mode, >1 = multi mode)",
+        help="Number of worker processes (default: 1 = single mode, >1 = multi mode with auto RNG desync)",
     )
 
     args = parser.parse_args()
@@ -72,14 +70,17 @@ def main() -> None:
     # Choose mode based on num_workers
     if args.num_workers > 1:
         logger.info(f"Launching multi-process mode with {args.num_workers} workers...")
+        logger.info("RNG desynchronization: ENABLED (always on for multi-worker mode)")
         from pyshiny_hunter.worker_process import launch_multi_mode
 
-        launch_multi_mode(rom_path, save_path, args.num_workers, args.randomize_start)
+        # Multi-worker mode ALWAYS uses RNG desync to prevent identical encounters
+        launch_multi_mode(rom_path, save_path, args.num_workers, randomize_start=True)
     else:
         logger.info("Launching single-emulator mode...")
         from pyshiny_hunter.single_mode import launch_single_mode
 
-        launch_single_mode(rom_path, save_path, args.randomize_start)
+        # Single mode doesn't need desync (only one emulator)
+        launch_single_mode(rom_path, save_path, randomize_start=False)
 
 
 if __name__ == "__main__":

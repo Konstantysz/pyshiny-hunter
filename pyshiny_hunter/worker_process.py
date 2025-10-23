@@ -7,11 +7,13 @@ and streams screenshots to the main GUI process via multiprocessing Queue.
 import datetime
 import json
 import multiprocessing as mp
+import random
 import time
 import traceback
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
+from pyshiny_hunter import config
 from pyshiny_hunter.black2_hunter import Black2Hunter
 from pyshiny_hunter.module_logger import logger
 from pyshiny_hunter.py_desmume_manager import PyDeSmuMEManager
@@ -26,6 +28,8 @@ def headless_worker(
     control_queue: mp.Queue,
     shiny_log: list,
     encounter_stats: dict,
+    desync_barrier: Optional[Any] = None,
+    init_status: Optional[dict] = None,
 ):
     """Headless worker process running emulator and streaming screenshots.
 
@@ -38,14 +42,70 @@ def headless_worker(
         control_queue: Queue for receiving control commands (future use)
         shiny_log: Shared list for centralized shiny logging
         encounter_stats: Shared dict for aggregate encounter statistics
+        desync_barrier: Optional multiprocessing.Barrier for synchronizing desync completion
+        init_status: Shared dict for reporting initialization progress to GUI
     """
     try:
+        # Report status: Loading emulator
+        if init_status is not None:
+            init_status[worker_id] = "loading"
+
         logger.info(f"[Worker {worker_id}] Starting headless emulator...")
 
         # Create headless manager (no GUI)
+        # NOTE: randomize_start is now IGNORED in PyDeSmuMEManager for multi-process mode
+        # We apply RNG desync manually here AFTER emulator creation
         manager = PyDeSmuMEManager(
-            rom_path, save_path, randomize_start, num_emulators=1, headless=True
+            rom_path, save_path, randomize_start=False, num_emulators=1, headless=True
         )
+
+        # Apply RNG desynchronization if requested
+        # CRITICAL: This MUST happen inside worker process, not in main process!
+        # Each worker process has its own emulator instance - offsetting in main process has no effect
+        if randomize_start:
+            # Report status: Desyncing RNG
+            if init_status is not None:
+                init_status[worker_id] = "desyncing"
+
+            emulator = manager.get_emulators()[0]
+
+            # Hybrid desync: progressive base + random jitter
+            base_offset = worker_id * config.WORKER_RNG_BASE_OFFSET_FRAMES
+            jitter = random.randrange(0, config.WORKER_RNG_JITTER_FRAMES + 1)  # nosec B311
+            total_offset = base_offset + jitter
+
+            # Advance emulator RNG state
+            for _ in range(total_offset):
+                emulator.emulator.cycle()
+
+            save_type = save_path.suffix.upper()[1:] if save_path else "NO_SAVE"
+            logger.info(
+                f"[Worker {worker_id}] ({save_type}) RNG desync offset = {total_offset} frames "
+                f"(base: {base_offset} + jitter: {jitter}) = {total_offset/60:.2f}s - "
+                f"guaranteed unique RNG state"
+            )
+
+        # Wait for all workers to complete desynchronization before starting main loop
+        # This ensures GUI shows all emulator streams simultaneously (synchronized start)
+        if desync_barrier is not None:
+            # Report status: Waiting for other workers
+            if init_status is not None:
+                init_status[worker_id] = "waiting"
+
+            logger.info(f"[Worker {worker_id}] Desync complete, waiting for other workers...")
+            try:
+                desync_barrier.wait(timeout=30)  # Max 30s wait for all workers
+            except Exception as e:
+                logger.error(
+                    f"[Worker {worker_id}] Barrier timeout or error: {e}. "
+                    f"One or more workers may have failed to initialize."
+                )
+                raise
+            logger.info(f"[Worker {worker_id}] All workers ready, starting synchronized!")
+
+        # Report status: Ready to start
+        if init_status is not None:
+            init_status[worker_id] = "ready"
 
         # Create hunter
         hunter = Black2Hunter()
@@ -211,6 +271,14 @@ def launch_multi_mode(
         }
     )
 
+    # Shared initialization status for GUI progress display
+    # Each worker reports: "loading" → "desyncing" → "waiting" → "ready"
+    init_status = manager.dict()
+
+    # Barrier for synchronizing desync completion
+    # All workers wait at barrier after desync, then start streaming simultaneously
+    desync_barrier = mp.Barrier(num_workers) if randomize_start else None
+
     # Launch worker processes
     processes = []
     for i in range(num_workers):
@@ -225,11 +293,13 @@ def launch_multi_mode(
                 control_queues[i],
                 shiny_log,
                 encounter_stats,
+                desync_barrier,
+                init_status,
             ),
         )
         p.start()
         processes.append(p)
-        time.sleep(0.5)  # Stagger startup
+        time.sleep(0.1)  # Small stagger to avoid race conditions (reduced from 0.5s)
 
     logger.info(f"\n✅ Launched {num_workers} worker processes!")
     logger.info("Starting unified GUI...\n")
@@ -238,9 +308,9 @@ def launch_multi_mode(
         # Import here to avoid circular imports
         from pyshiny_hunter.gui_process import unified_gui_main_process
 
-        # Run main GUI
+        # Run main GUI with initialization status tracking
         unified_gui_main_process(
-            num_workers, screenshot_queue, control_queues, shiny_log, encounter_stats
+            num_workers, screenshot_queue, control_queues, shiny_log, encounter_stats, init_status
         )
     except KeyboardInterrupt:
         logger.info("\n🛑 Stopping all workers...")
