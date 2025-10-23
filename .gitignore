@@ -6,6 +6,11 @@ data/
 output/
 analysis_output/
 analysis_timeline.png
+reports/
+
+# Runtime generated files
+encounter_stats.json
+shiny_log.json
 
 # Allow screenshots in docs/images/
 !docs/images/*.png
