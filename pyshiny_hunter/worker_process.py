@@ -10,13 +10,58 @@ import multiprocessing as mp
 import random
 import time
 import traceback
+from multiprocessing.managers import DictProxy
+from multiprocessing.synchronize import Barrier
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from pyshiny_hunter import config
 from pyshiny_hunter.black2_hunter import Black2Hunter
 from pyshiny_hunter.module_logger import logger
 from pyshiny_hunter.py_desmume_manager import PyDeSmuMEManager
+
+
+def build_complete_keymask(pressed_keys: set[str]) -> int:
+    """Build complete NDS input bitmask from set of pressed key names.
+
+    This is the CORRECT way to handle input according to DeSmuME architecture analysis.
+    Native DeSmuME always sends COMPLETE button state, never additive operations.
+
+    Args:
+        pressed_keys: Set of key names (e.g., {"KEY_UP", "KEY_A"})
+
+    Returns:
+        Complete 16-bit bitmask representing ALL buttons (0-15)
+        Pressed buttons have their bit set to 1, released buttons are 0.
+
+    Reference: DeSmuME_INPUT_ANALYSIS.md - Bit positions from NDSSystem.cpp
+    """
+    # Bit positions from DeSmuME source (ctrlssdl.h and NDSSystem.cpp)
+    KEY_TO_BIT = {
+        "KEY_A": 0,
+        "KEY_B": 1,
+        "KEY_SELECT": 2,
+        "KEY_START": 3,
+        "KEY_RIGHT": 4,
+        "KEY_LEFT": 5,
+        "KEY_UP": 6,
+        "KEY_DOWN": 7,
+        "KEY_R": 8,  # R shoulder
+        "KEY_L": 9,  # L shoulder
+        "KEY_X": 10,
+        "KEY_Y": 11,
+        "KEY_DEBUG": 12,
+        # Bit 13 unused
+        "KEY_LID": 14,
+        # Bit 15 unused
+    }
+
+    mask = 0
+    for key_name in pressed_keys:
+        if key_name in KEY_TO_BIT:
+            mask |= 1 << KEY_TO_BIT[key_name]
+
+    return mask
 
 
 def headless_worker(
@@ -28,8 +73,8 @@ def headless_worker(
     control_queue: mp.Queue,
     shiny_log: list,
     encounter_stats: dict,
-    desync_barrier: Optional[Any] = None,
-    init_status: Optional[dict] = None,
+    desync_barrier: Optional[Barrier] = None,
+    init_status: Optional[DictProxy] = None,
 ):
     """Headless worker process running emulator and streaming screenshots.
 
@@ -81,7 +126,7 @@ def headless_worker(
             save_type = save_path.suffix.upper()[1:] if save_path else "NO_SAVE"
             logger.info(
                 f"[Worker {worker_id}] ({save_type}) RNG desync offset = {total_offset} frames "
-                f"(base: {base_offset} + jitter: {jitter}) = {total_offset/60:.2f}s - "
+                f"(base: {base_offset} + jitter: {jitter}) = {total_offset / 60:.2f}s - "
                 f"guaranteed unique RNG state"
             )
 
@@ -100,7 +145,12 @@ def headless_worker(
                     f"[Worker {worker_id}] Barrier timeout or error: {e}. "
                     f"One or more workers may have failed to initialize."
                 )
-                raise
+                # Update status to show failure
+                if init_status is not None:
+                    init_status[worker_id] = f"failed: {str(e)[:50]}"
+                raise RuntimeError(
+                    f"Worker {worker_id} failed to synchronize with other workers"
+                ) from e
             logger.info(f"[Worker {worker_id}] All workers ready, starting synchronized!")
 
         # Report status: Ready to start
@@ -112,13 +162,87 @@ def headless_worker(
         battle_ready_frame = -1
         battle_start_frame = -1
 
+        # Manual control state
+        paused = False  # When True, hunter state machine is paused for manual control
+        active_keys = set()  # Track currently pressed keys for manual control
+
         logger.info(f"[Worker {worker_id}] Initialized, starting main loop...")
 
         frame_count = 0
         last_encounters = {}  # Track last known encounter dict for change detection
 
         while manager.update_frame(hunter.get_encounters()):
+            # Process control commands from GUI
+            # Monitor queue size for debugging
+            queue_size = control_queue.qsize()
+            if queue_size > 10:
+                logger.warning(f"[Worker {worker_id}] Control queue backing up: {queue_size} items")
+
+            while not control_queue.empty():
+                try:
+                    command = control_queue.get_nowait()
+                    action = command.get("action")
+                    logger.debug(f"[Worker {worker_id}] Received command: action={action}")
+
+                    if action == "pause":
+                        paused = True
+                        active_keys.clear()  # Clear any held keys when pausing
+                        logger.info(
+                            f"[Worker {worker_id}] 🎮 Manual control activated - hunter paused"
+                        )
+                    elif action == "resume":
+                        paused = False
+                        active_keys.clear()  # Clear any held keys when resuming
+                        logger.info(
+                            f"[Worker {worker_id}] ▶️ Manual control deactivated - resuming hunter"
+                        )
+                    elif action == "input":
+                        input_type = command.get("type")
+
+                        if input_type == "key_state":
+                            # Replace active keys with current state from GUI
+                            # CRITICAL: Must modify existing set, not create new local variable!
+                            keys_received = command.get("keys", [])
+                            active_keys.clear()
+                            active_keys.update(keys_received)
+                            logger.debug(
+                                f"[Worker {worker_id}] Updated active_keys: {list(active_keys)} "
+                                f"(received {len(keys_received)} keys)"
+                            )
+                        elif input_type == "touch":
+                            # Touch is immediate, not stateful
+                            x = command.get("x")
+                            y = command.get("y")
+                            if x is not None and y is not None:
+                                manager.add_input_to_queue(0, "touch", x=x, y=y)
+                except Exception as e:  # nosec B110
+                    logger.error(
+                        f"[Worker {worker_id}] Error processing command: {e}", exc_info=True
+                    )
+
+            # Apply all active keys to emulator in manual control mode
+            # CORRECT APPROACH per DeSmuME analysis: Send COMPLETE state, not additive!
             emulator = manager.get_emulators()[0]
+
+            if paused:
+                # Build COMPLETE keymask representing ALL 14 buttons (pressed + released)
+                # This is how native DeSmuME works - always send complete state!
+                complete_mask = build_complete_keymask(active_keys)
+
+                # Set COMPLETE button state in one atomic operation
+                # This eliminates race conditions and ensures immediate response
+                emulator.emulator.input.keypad_update(complete_mask)
+
+                # Debug logging
+                if active_keys:
+                    logger.debug(
+                        f"[Worker {worker_id}] Complete state: {len(active_keys)} keys pressed: "
+                        f"{list(active_keys)} (mask=0x{complete_mask:04X})"
+                    )
+                elif frame_count % 60 == 0:  # Log once per second when no keys
+                    logger.debug(
+                        f"[Worker {worker_id}] Complete state: all keys released (mask=0x0000)"
+                    )
             top_screen, bottom_screen = emulator.get_screens()
 
             # Update shared encounter stats when new encounters detected
@@ -150,57 +274,58 @@ def headless_worker(
 
             last_encounters = dict(current_encounters)
 
-            # State machine logic
-            if hunter.current_state.id == "search":
-                hunter.searching_pokemon(top_screen, bottom_screen)
-
-                # Automated movement
-                if emulator.frame % 10 == 0:
-                    manager.add_input_to_queue(0, "key", key="KEY_LEFT")
-                elif emulator.frame % 10 == 5:
-                    manager.add_input_to_queue(0, "key", key="KEY_RIGHT")
-
-            elif hunter.current_state.id == "check_if_shiny":
-                hunter.checking_shiny(top_screen, bottom_screen)
-                if battle_start_frame == -1:
-                    battle_start_frame = emulator.frame
-
-            elif hunter.current_state.id == "pre_battle_animation":
-                hunter.waiting_for_battle_start(top_screen, bottom_screen)
-                if battle_ready_frame == -1:
-                    battle_ready_frame = emulator.frame
-
-            elif hunter.current_state.id == "in_battle":
-                hunter.running_away(battle_ready_frame - battle_start_frame)
-
-                if hunter.current_state.id == "found":
-                    # SHINY FOUND!
-                    logger.info("=" * 60)
-                    logger.info(f"[Worker {worker_id}] ⭐ SHINY POKEMON FOUND! ⭐")
-                    logger.info("=" * 60)
-
-                    save_name = f"roms/states/black2/shiny_worker{worker_id}_{battle_ready_frame - battle_start_frame}.dst"
-                    emulator.emulator.savestate.save_file(save_name)
-                    logger.info(f"[Worker {worker_id}] Saved to: {save_name}")
-
-                    # Log to centralized shiny log
-                    shiny_entry = {
-                        "worker_id": worker_id,
-                        "timestamp": datetime.datetime.now().isoformat(),
-                        "frame_diff": battle_ready_frame - battle_start_frame,
-                        "save_file": save_name,
-                        "total_encounters": sum(hunter.get_encounters().values()),
-                        "encounters": dict(hunter.get_encounters()),
-                    }
-                    shiny_log.append(shiny_entry)
-                    logger.info(f"[Worker {worker_id}] Logged to centralized shiny log")
-                else:
-                    manager.add_input_to_queue(0, "touch", x=128, y=180)
-
-                # Reset frame counters when back to search
+            # State machine logic - skip if paused (manual control active)
+            if not paused:
                 if hunter.current_state.id == "search":
-                    battle_start_frame = -1
-                    battle_ready_frame = -1
+                    hunter.searching_pokemon(top_screen, bottom_screen)
+
+                    # Automated movement
+                    if emulator.frame % 10 == 0:
+                        manager.add_input_to_queue(0, "key", key="KEY_LEFT")
+                    elif emulator.frame % 10 == 5:
+                        manager.add_input_to_queue(0, "key", key="KEY_RIGHT")
+
+                elif hunter.current_state.id == "check_if_shiny":
+                    hunter.checking_shiny(top_screen, bottom_screen)
+                    if battle_start_frame == -1:
+                        battle_start_frame = emulator.frame
+
+                elif hunter.current_state.id == "pre_battle_animation":
+                    hunter.waiting_for_battle_start(top_screen, bottom_screen)
+                    if battle_ready_frame == -1:
+                        battle_ready_frame = emulator.frame
+
+                elif hunter.current_state.id == "in_battle":
+                    hunter.running_away(battle_ready_frame - battle_start_frame)
+
+                    if hunter.current_state.id == "found":
+                        # SHINY FOUND!
+                        logger.info("=" * 60)
+                        logger.info(f"[Worker {worker_id}] ⭐ SHINY POKEMON FOUND! ⭐")
+                        logger.info("=" * 60)
+
+                        save_name = f"roms/states/black2/shiny_worker{worker_id}_{battle_ready_frame - battle_start_frame}.dst"
+                        emulator.emulator.savestate.save_file(save_name)
+                        logger.info(f"[Worker {worker_id}] Saved to: {save_name}")
+
+                        # Log to centralized shiny log
+                        shiny_entry = {
+                            "worker_id": worker_id,
+                            "timestamp": datetime.datetime.now().isoformat(),
+                            "frame_diff": battle_ready_frame - battle_start_frame,
+                            "save_file": save_name,
+                            "total_encounters": sum(hunter.get_encounters().values()),
+                            "encounters": dict(hunter.get_encounters()),
+                        }
+                        shiny_log.append(shiny_entry)
+                        logger.info(f"[Worker {worker_id}] Logged to centralized shiny log")
+                    else:
+                        manager.add_input_to_queue(0, "touch", x=128, y=180)
+
+                    # Reset frame counters when back to search
+                    if hunter.current_state.id == "search":
+                        battle_start_frame = -1
+                        battle_ready_frame = -1
 
             # Stream screenshot to GUI every frame
             screenshot = emulator.take_screenshot()
@@ -213,6 +338,7 @@ def headless_worker(
                 "frame": emulator.frame,
                 "total_encounters": sum(hunter.get_encounters().values()),
                 "fps": emulator.get_fps(),
+                "paused": paused,  # Manual control state
             }
 
             # Non-blocking put (drop frame if queue full to avoid backup)
@@ -299,7 +425,9 @@ def launch_multi_mode(
         )
         p.start()
         processes.append(p)
-        time.sleep(0.1)  # Small stagger to avoid race conditions (reduced from 0.5s)
+        # Stagger worker startup to prevent simultaneous file I/O operations
+        # when loading the same ROM/save files (prevents potential file locking issues)
+        time.sleep(0.1)
 
     logger.info(f"\n✅ Launched {num_workers} worker processes!")
     logger.info("Starting unified GUI...\n")
