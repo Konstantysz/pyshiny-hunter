@@ -70,6 +70,10 @@ def unified_gui_main_process(
     window = glfw_init("PyShiny Hunter - Multi Mode", window_width, window_height)
     renderer = GlfwRenderer(window)
 
+    # DISABLE ImGui keyboard navigation GLOBALLY - we need arrow keys for game control!
+    io = imgui.get_io()
+    io.config_flags &= ~imgui.CONFIG_NAV_ENABLE_KEYBOARD  # Turn OFF keyboard nav
+
     # Create textures for each worker
     texture_ids = [opengl_create_texture(256, 384) for _ in range(num_workers)]
 
@@ -84,6 +88,7 @@ def unified_gui_main_process(
             "total_encounters": 0,
             "last_update": time.time(),
             "fps": 0.0,
+            "paused": False,
         }
 
     logger.info("[Main GUI] GUI initialized, starting render loop...")
@@ -92,12 +97,18 @@ def unified_gui_main_process(
     glfw.maximize_window(window)
 
     try:
+        # Track which worker is under manual control (need to persist across frames)
+        controlled_worker = None
+        frame_count = 0  # For throttling debug logs
+        prev_key_state = set()  # Track previous key state to only send changes
+
         while not glfw.window_should_close(window):
             glfw.poll_events()
             renderer.process_inputs()
 
             # Get current window size (handles maximization/resize)
             current_width, current_height = glfw.get_window_size(window)
+            frame_count += 1
 
             # Process all available screenshot updates from workers
             updates_processed = 0
@@ -116,6 +127,7 @@ def unified_gui_main_process(
                                 "total_encounters": data["total_encounters"],
                                 "last_update": time.time(),
                                 "fps": data.get("fps", 0.0),
+                                "paused": data.get("paused", False),
                             }
                         )
 
@@ -143,12 +155,13 @@ def unified_gui_main_process(
             # Workers are considered "ready" when they reach "waiting" or "ready" status
             # "waiting" = finished desync, waiting at barrier for others
             # "ready" = passed barrier, started main loop
+            # Convert init_status once per frame to avoid redundant dict conversions
+            init_status_snapshot = dict(init_status) if init_status is not None else {}
             all_workers_ready = False
-            if init_status is not None:
-                status_dict = dict(init_status)
+            if init_status_snapshot:
                 # Count workers that are either waiting at barrier OR fully ready
                 workers_at_barrier_or_ready = sum(
-                    1 for s in status_dict.values() if s in ("waiting", "ready")
+                    1 for s in init_status_snapshot.values() if s in ("waiting", "ready")
                 )
                 all_workers_ready = workers_at_barrier_or_ready == num_workers
             else:
@@ -181,12 +194,12 @@ def unified_gui_main_process(
                     imgui.spacing()
                     imgui.spacing()
 
-                    # Get current status (fresh read every frame)
-                    status_dict = dict(init_status) if init_status else {}
+                    # Use the snapshot we already created at start of frame
+                    # (no need to convert dict again)
 
                     # Count workers by status
-                    ready_count = sum(1 for s in status_dict.values() if s == "ready")
-                    waiting_count = sum(1 for s in status_dict.values() if s == "waiting")
+                    ready_count = sum(1 for s in init_status_snapshot.values() if s == "ready")
+                    waiting_count = sum(1 for s in init_status_snapshot.values() if s == "waiting")
 
                     # Progress bar - count workers that finished desync (waiting + ready)
                     finished_desync_count = waiting_count + ready_count
@@ -205,7 +218,7 @@ def unified_gui_main_process(
                     imgui.set_cursor_pos_x(workers_width / 2 - 200)
                     imgui.begin_child("worker_status", 400, 200, border=True)
                     for worker_id in range(num_workers):
-                        status = status_dict.get(worker_id, "pending...")
+                        status = init_status_snapshot.get(worker_id, "pending...")
 
                         # Color-code status
                         if status == "ready":
@@ -289,8 +302,167 @@ def unified_gui_main_process(
                             if len(state["encounters"]) > 5:
                                 imgui.text_colored("...", 0.5, 0.5, 0.5)
 
+                        # Manual control buttons
+                        imgui.separator()
+                        imgui.spacing()
+
+                        if state["paused"]:
+                            # Show "Resume Hunter" button when paused
+                            imgui.push_style_color(imgui.COLOR_BUTTON, 0.0, 0.6, 0.0)
+                            if imgui.button(f"Resume##w{worker_id}", width=140):
+                                # Send resume command to worker
+                                control_queues[worker_id].put({"action": "resume"})
+                                controlled_worker = None
+                            imgui.pop_style_color()
+                        else:
+                            # Show "Take Control" button when running
+                            imgui.push_style_color(imgui.COLOR_BUTTON, 0.6, 0.4, 0.0)
+                            disabled = (
+                                controlled_worker is not None and controlled_worker != worker_id
+                            )
+                            if disabled:
+                                imgui.push_style_color(imgui.COLOR_BUTTON, 0.3, 0.3, 0.3)
+                                imgui.push_style_color(imgui.COLOR_BUTTON_HOVERED, 0.3, 0.3, 0.3)
+                                imgui.push_style_color(imgui.COLOR_BUTTON_ACTIVE, 0.3, 0.3, 0.3)
+
+                            if imgui.button(f"Take Control##w{worker_id}", width=140):
+                                if not disabled:
+                                    # Send pause command to worker
+                                    control_queues[worker_id].put({"action": "pause"})
+                                    controlled_worker = worker_id
+
+                            if disabled:
+                                imgui.pop_style_color(3)
+                            imgui.pop_style_color()
+
                         imgui.end_child()
                         imgui.end_child()
+
+            # Manual Control Modal Window
+            if controlled_worker is not None and worker_states[controlled_worker]["paused"]:
+                # Show modal window for manual control
+                imgui.open_popup("Manual Control")
+
+                # Center the modal window - size based on 1.5× emulator display
+                modal_width = 400
+                modal_height = 750
+                imgui.set_next_window_size(modal_width, modal_height)
+                imgui.set_next_window_position(
+                    (current_width - modal_width) // 2, (current_height - modal_height) // 2
+                )
+
+                if imgui.begin_popup_modal(
+                    "Manual Control",
+                    flags=imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE,
+                )[0]:
+                    state = worker_states[controlled_worker]
+
+                    # Title
+                    imgui.text(f"Manual Control - Worker {controlled_worker}")
+                    imgui.separator()
+                    imgui.spacing()
+
+                    # Emulator display (1.5× size: 384×576)
+                    imgui.text("Emulator Screen:")
+                    imgui.image(texture_ids[controlled_worker], 384, 576)
+                    imgui.spacing()
+
+                    # Keyboard controls help
+                    imgui.separator()
+                    imgui.text("Keyboard Controls:")
+                    imgui.spacing()
+                    imgui.columns(2, "controls")
+                    imgui.text("D-Pad: Arrow Keys")
+                    imgui.text("A Button: Z")
+                    imgui.text("B Button: X")
+                    imgui.text("X Button: A")
+                    imgui.next_column()
+                    imgui.text("Y Button: S")
+                    imgui.text("L Trigger: Q")
+                    imgui.text("R Trigger: W")
+                    imgui.text("Start: Enter, Select: Shift")
+                    imgui.columns(1)
+                    imgui.spacing()
+
+                    imgui.separator()
+                    imgui.spacing()
+
+                    # Resume button
+                    imgui.push_style_color(imgui.COLOR_BUTTON, 0.0, 0.6, 0.0)
+                    if imgui.button("Resume Hunter", width=380):
+                        control_queues[controlled_worker].put({"action": "resume"})
+                        controlled_worker = None
+                        prev_key_state.clear()  # Reset key state tracking
+                        imgui.close_current_popup()
+                    imgui.pop_style_color()
+
+                    # Send complete keyboard state every frame (simple & reliable)
+                    io = imgui.get_io()
+
+                    # DEBUG: Log arrow key state when pressed (not every frame to reduce spam)
+                    arrow_debug = []
+                    if glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS:
+                        arrow_debug.append("UP")
+                    if glfw.get_key(window, glfw.KEY_DOWN) == glfw.PRESS:
+                        arrow_debug.append("DOWN")
+                    if glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS:
+                        arrow_debug.append("LEFT")
+                    if glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS:
+                        arrow_debug.append("RIGHT")
+                    if arrow_debug:
+                        logger.debug(f"[GUI] Arrow keys via GLFW: {arrow_debug}")
+
+                    # Build list of currently pressed keys
+                    pressed_keys = []
+
+                    # Arrow keys: Use GLFW directly (GlfwRenderer blocks them from ImGui)
+                    if glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS:
+                        pressed_keys.append("KEY_UP")
+                    if glfw.get_key(window, glfw.KEY_DOWN) == glfw.PRESS:
+                        pressed_keys.append("KEY_DOWN")
+                    if glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS:
+                        pressed_keys.append("KEY_LEFT")
+                    if glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS:
+                        pressed_keys.append("KEY_RIGHT")
+                    if io.keys_down[ord("Z")]:
+                        pressed_keys.append("KEY_A")
+                    if io.keys_down[ord("X")]:
+                        pressed_keys.append("KEY_B")
+                    if io.keys_down[ord("A")]:
+                        pressed_keys.append("KEY_X")
+                    if io.keys_down[ord("S")]:
+                        pressed_keys.append("KEY_Y")
+                    if io.keys_down[ord("Q")]:
+                        pressed_keys.append("KEY_L")
+                    if io.keys_down[ord("W")]:
+                        pressed_keys.append("KEY_R")
+                    if io.keys_down[imgui.KEY_ENTER]:
+                        pressed_keys.append("KEY_START")
+                    if io.key_shift:
+                        pressed_keys.append("KEY_SELECT")
+
+                    # DEBUG: Show currently pressed keys
+                    imgui.spacing()
+                    imgui.separator()
+                    imgui.text("Debug - Currently Pressed:")
+                    if pressed_keys:
+                        for key in pressed_keys:
+                            imgui.text(f"  {key}")
+                    else:
+                        imgui.text_colored("  (none)", 0.5, 0.5, 0.5)
+
+                    # Only send keyboard state when it CHANGES (eliminates queue flooding)
+                    current_key_state = set(pressed_keys)
+                    if current_key_state != prev_key_state:
+                        control_queues[controlled_worker].put(
+                            {"action": "input", "type": "key_state", "keys": pressed_keys}
+                        )
+                        logger.debug(
+                            f"[GUI] Key state changed: {list(prev_key_state)} → {pressed_keys}"
+                        )
+                        prev_key_state = current_key_state
+
+                    imgui.end_popup()
 
             # Sidebar with Aggregate Stats and Shiny Log (uses actual window size)
             imgui.set_next_window_position(current_width - sidebar_width, 0)
