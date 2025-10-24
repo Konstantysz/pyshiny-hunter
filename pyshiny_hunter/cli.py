@@ -74,7 +74,9 @@ def main() -> None:
         from pyshiny_hunter.worker_process import launch_multi_mode
 
         # Multi-worker mode ALWAYS uses RNG desync to prevent identical encounters
-        launch_multi_mode(rom_path, save_path, args.num_workers, randomize_start=True)
+        # DeSmuME has deterministic RNG - without desync, all workers see identical Pokemon
+        MULTI_WORKER_RNG_DESYNC = True
+        launch_multi_mode(rom_path, save_path, args.num_workers, randomize_start=MULTI_WORKER_RNG_DESYNC)
     else:
         logger.info("Launching single-emulator mode...")
         from pyshiny_hunter.single_mode import launch_single_mode
