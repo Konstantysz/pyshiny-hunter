@@ -287,6 +287,10 @@ class Black2Hunter(Hunter):
             )
             if matches:
                 encounter_name = matches[0]
+            else:
+                logger.warning(
+                    f"Encounter name '{encounter_name}' not recognized and no close match found."
+                )
 
         # STEP 8: Update encounter counter
         if encounter_name in self.encounters:
