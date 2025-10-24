@@ -114,3 +114,34 @@ WORKER_RNG_BASE_OFFSET_FRAMES: int = 60
 # 30 frames @ 60 FPS = 0-0.5 seconds additional randomization
 # Example ranges: Worker 0: [0,30], Worker 1: [60,90], Worker 2: [120,150] (no overlap!)
 WORKER_RNG_JITTER_FRAMES: int = 30
+
+# =============================================================================
+# Manual Control - Keyboard Mapping
+# =============================================================================
+
+# Keyboard mapping for manual emulator control
+# Format: ImGui key code -> DeSmuME key name
+# Default controls inspired by common emulator layouts:
+#   D-Pad: Arrow keys
+#   A/B/X/Y: Z/X/A/S (left-hand positioning for right-handed mouse use)
+#   L/R: Q/W (above A/S for ergonomic reach)
+#   Start/Select: Enter/Shift
+
+MANUAL_CONTROL_KEY_MAP: dict[str, str] = {
+    # D-Pad
+    "UP": "KEY_UP",
+    "DOWN": "KEY_DOWN",
+    "LEFT": "KEY_LEFT",
+    "RIGHT": "KEY_RIGHT",
+    # Face buttons
+    "X": "KEY_A",  # A button (primary action)
+    "Z": "KEY_B",  # B button (secondary action/back)
+    "S": "KEY_X",  # X button
+    "A": "KEY_Y",  # Y button
+    # Shoulder buttons
+    "Q": "KEY_L",  # L trigger
+    "W": "KEY_R",  # R trigger
+    # System buttons
+    "ENTER": "KEY_START",
+    "SHIFT": "KEY_SELECT",  # Both left and right shift (detected via io.key_shift)
+}

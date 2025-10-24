@@ -412,34 +412,36 @@ def unified_gui_main_process(
                     if arrow_debug:
                         logger.debug(f"[GUI] Arrow keys via GLFW: {arrow_debug}")
 
-                    # Build list of currently pressed keys
+                    # Build list of currently pressed keys using config mapping
                     pressed_keys = []
 
                     # Arrow keys: Use GLFW directly (GlfwRenderer blocks them from ImGui)
                     if glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS:
-                        pressed_keys.append("KEY_UP")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["UP"])
                     if glfw.get_key(window, glfw.KEY_DOWN) == glfw.PRESS:
-                        pressed_keys.append("KEY_DOWN")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["DOWN"])
                     if glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS:
-                        pressed_keys.append("KEY_LEFT")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["LEFT"])
                     if glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS:
-                        pressed_keys.append("KEY_RIGHT")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["RIGHT"])
+
+                    # Face buttons and other keys from ImGui
                     if io.keys_down[ord("Z")]:
-                        pressed_keys.append("KEY_A")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["Z"])
                     if io.keys_down[ord("X")]:
-                        pressed_keys.append("KEY_B")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["X"])
                     if io.keys_down[ord("A")]:
-                        pressed_keys.append("KEY_X")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["A"])
                     if io.keys_down[ord("S")]:
-                        pressed_keys.append("KEY_Y")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["S"])
                     if io.keys_down[ord("Q")]:
-                        pressed_keys.append("KEY_L")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["Q"])
                     if io.keys_down[ord("W")]:
-                        pressed_keys.append("KEY_R")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["W"])
                     if io.keys_down[imgui.KEY_ENTER]:
-                        pressed_keys.append("KEY_START")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["ENTER"])
                     if io.key_shift:
-                        pressed_keys.append("KEY_SELECT")
+                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["SHIFT"])
 
                     # DEBUG: Show currently pressed keys
                     imgui.spacing()
