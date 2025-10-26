@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import os
 import random
 import time
 from pathlib import Path
 from queue import Queue
-from typing import Optional
 
 import glfw
 import imgui
@@ -23,7 +24,7 @@ from pyshiny_hunter.utils.gui_utils import (
 
 
 class DeSmuMEWrapper:
-    def __init__(self, rom_path: Path, save_path: Optional[Path] = None):
+    def __init__(self, rom_path: Path, save_path: Path | None = None):
         self.emulator = DeSmuME()
         self.emulator.open(str(rom_path))
         self.emulator.volume_set(0)
@@ -32,7 +33,7 @@ class DeSmuMEWrapper:
         # FPS tracking
         self.fps = 0.0
         self.fps_frame_count = 0
-        self.fps_last_time = None
+        self.fps_last_time: float | None = None
 
         if save_path:
             self.__load_save(save_path)
@@ -74,7 +75,7 @@ class DeSmuMEWrapper:
         return self.fps
 
     def take_screenshot(self) -> np.ndarray:
-        return np.array(self.emulator.screenshot().convert("RGBA"))
+        return np.array(self.emulator.screenshot().convert("RGBA"))  # type: ignore[no-any-return]
 
     def get_screens(self) -> tuple[np.ndarray, np.ndarray]:
         screen = self.take_screenshot()[:, :, ::-1].copy()
@@ -104,7 +105,7 @@ class PyDeSmuMEManager:
     def __init__(
         self,
         rom_path: Path,
-        save_path: Optional[Path] = None,
+        save_path: Path | None = None,
         randomize_start: bool = False,
         num_emulators: int = 1,  # Changed from 2 to 1 - py-desmume doesn't support multiple instances
         headless: bool = False,  # NEW: Run without GUI (for multi-process workers)
@@ -138,13 +139,11 @@ class PyDeSmuMEManager:
             # For single-process mode with randomize_start, apply offset here
             if randomize_start and not headless:
                 # Single-process mode: simple random offset (no need for progressive)
-                random_offset = random.randrange(
-                    0, config.WORKER_RNG_JITTER_FRAMES * 10
-                )  # nosec B311 - Not used for security
+                random_offset = random.randrange(0, config.WORKER_RNG_JITTER_FRAMES * 10)  # nosec B311 - Not used for security
                 for _ in range(random_offset):
                     wrapper.emulator.cycle()
                 logger.info(
-                    f"Single mode: Random offset {random_offset} frames ({random_offset/60:.2f}s)"
+                    f"Single mode: Random offset {random_offset} frames ({random_offset / 60:.2f}s)"
                 )
 
             self.emulators.append(wrapper)

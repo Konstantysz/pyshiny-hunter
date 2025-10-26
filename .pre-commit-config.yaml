@@ -12,13 +12,6 @@ repos:
       # Run the formatter
       - id: ruff-format
 
-  # Black - Python code formatter
-  - repo: https://github.com/psf/black
-    rev: 25.1.0
-    hooks:
-      - id: black
-        language_version: python3.12
-
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

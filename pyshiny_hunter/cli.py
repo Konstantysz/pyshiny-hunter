@@ -34,8 +34,10 @@ def main() -> None:
         import os
 
         os.system("chcp 65001 > nul")  # nosec B605 B607 - Safe Windows console command
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 
     parser = argparse.ArgumentParser(
         description="PyShiny Hunter - Automated shiny Pokemon hunting with DeSmuME",
@@ -76,7 +78,9 @@ def main() -> None:
         # Multi-worker mode ALWAYS uses RNG desync to prevent identical encounters
         # DeSmuME has deterministic RNG - without desync, all workers see identical Pokemon
         MULTI_WORKER_RNG_DESYNC = True
-        launch_multi_mode(rom_path, save_path, args.num_workers, randomize_start=MULTI_WORKER_RNG_DESYNC)
+        launch_multi_mode(
+            rom_path, save_path, args.num_workers, randomize_start=MULTI_WORKER_RNG_DESYNC
+        )
     else:
         logger.info("Launching single-emulator mode...")
         from pyshiny_hunter.single_mode import launch_single_mode

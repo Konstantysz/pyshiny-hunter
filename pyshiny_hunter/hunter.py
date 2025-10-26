@@ -1,17 +1,18 @@
+from __future__ import annotations
+
 from abc import ABCMeta, abstractmethod
-from typing import Optional
 
 import numpy as np
 from statemachine import State, StateMachine
 
 
-class HunterMeta(type(StateMachine), ABCMeta):
+class HunterMeta(type(StateMachine), ABCMeta):  # type: ignore[misc]
     """Metaclass combining StateMachine and ABC for multiple inheritance."""
 
     pass
 
 
-class Hunter(StateMachine, metaclass=HunterMeta):
+class Hunter(StateMachine, metaclass=HunterMeta):  # type: ignore[misc,metaclass]
     """Abstract base class for automated shiny Pokemon hunting using state machines.
 
     This class defines a 5-state finite state machine for shiny hunting automation:
@@ -72,7 +73,7 @@ class Hunter(StateMachine, metaclass=HunterMeta):
         search, unless="_is_pokemon_shiny"
     )
 
-    def __init__(self, hunted_pokemon: Optional[list[str] | str] = None):
+    def __init__(self, hunted_pokemon: list[str] | str | None = None):
         """Initialize Hunter with empty encounter tracker.
 
         Args:

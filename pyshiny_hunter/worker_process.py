@@ -4,16 +4,18 @@ This module implements the worker process that runs headless emulators
 and streams screenshots to the main GUI process via multiprocessing Queue.
 """
 
+from __future__ import annotations
+
 import datetime
 import json
 import multiprocessing as mp
 import random
 import time
 import traceback
-from multiprocessing.managers import DictProxy
+from multiprocessing.managers import DictProxy, ListProxy
 from multiprocessing.synchronize import Barrier
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from pyshiny_hunter import config
 from pyshiny_hunter.black2_hunter import Black2Hunter
@@ -67,15 +69,15 @@ def build_complete_keymask(pressed_keys: set[str]) -> int:
 def headless_worker(
     worker_id: int,
     rom_path: Path,
-    save_path: Optional[Path],
+    save_path: Path | None,
     randomize_start: bool,
-    screenshot_queue: mp.Queue,
-    control_queue: mp.Queue,
-    shiny_log: list,
-    encounter_stats: dict,
-    desync_barrier: Optional[Barrier] = None,
-    init_status: Optional[DictProxy] = None,
-):
+    screenshot_queue: mp.Queue[Any],
+    control_queue: mp.Queue[Any],
+    shiny_log: ListProxy[Any],
+    encounter_stats: DictProxy[Any, Any],
+    desync_barrier: Barrier | None = None,
+    init_status: DictProxy[Any, Any] | None = None,
+) -> None:
     """Headless worker process running emulator and streaming screenshots.
 
     Args:
@@ -164,12 +166,12 @@ def headless_worker(
 
         # Manual control state
         paused = False  # When True, hunter state machine is paused for manual control
-        active_keys = set()  # Track currently pressed keys for manual control
+        active_keys: set[str] = set()  # Track currently pressed keys for manual control
 
         logger.info(f"[Worker {worker_id}] Initialized, starting main loop...")
 
         frame_count = 0
-        last_encounters = {}  # Track last known encounter dict for change detection
+        last_encounters: dict[str, int] = {}  # Track last known encounter dict for change detection
 
         while manager.update_frame(hunter.get_encounters()):
             # Process control commands from GUI
@@ -360,10 +362,10 @@ def headless_worker(
 
 def launch_multi_mode(
     rom_path: Path,
-    save_path: Optional[Path],
+    save_path: Path | None,
     num_workers: int,
     randomize_start: bool,
-):
+) -> None:
     """Launch multi-process mode with unified GUI.
 
     Args:
@@ -383,12 +385,14 @@ def launch_multi_mode(
 
     # Create shared data structures
     manager = mp.Manager()
-    screenshot_queue = mp.Queue(maxsize=num_workers * 10)  # Buffer 10 frames per worker
-    control_queues = [mp.Queue() for _ in range(num_workers)]
+    screenshot_queue: mp.Queue[Any] = mp.Queue(
+        maxsize=num_workers * 10
+    )  # Buffer 10 frames per worker
+    control_queues: list[mp.Queue[Any]] = [mp.Queue() for _ in range(num_workers)]
 
     # Shared shiny log and encounter statistics
-    shiny_log = manager.list()
-    encounter_stats = manager.dict(
+    shiny_log: ListProxy[Any] = manager.list()
+    encounter_stats: DictProxy[Any, Any] = manager.dict(
         {
             "total_encounters": 0,
             "pokemon_counts": manager.dict(),
@@ -399,7 +403,7 @@ def launch_multi_mode(
 
     # Shared initialization status for GUI progress display
     # Each worker reports: "loading" → "desyncing" → "waiting" → "ready"
-    init_status = manager.dict()
+    init_status: DictProxy[Any, Any] = manager.dict()
 
     # Barrier for synchronizing desync completion
     # All workers wait at barrier after desync, then start streaming simultaneously
@@ -459,14 +463,15 @@ def launch_multi_mode(
             logger.info(f"\n💾 Saved shiny log to: {log_file} ({len(shiny_log)} entries)")
 
         # Save encounter stats to file
-        if encounter_stats.get("total_encounters", 0) > 0:
+        total_encounters = int(encounter_stats.get("total_encounters", 0))
+        if total_encounters > 0:
             stats_file = Path("encounter_stats.json")
+            pokemon_counts_dict = dict(encounter_stats.get("pokemon_counts", {}))
+            worker_contribs_dict = dict(encounter_stats.get("worker_contributions", {}))
             stats_data = {
-                "total_encounters": encounter_stats.get("total_encounters", 0),
-                "pokemon_counts": dict(encounter_stats.get("pokemon_counts", {})),
-                "worker_contributions": {
-                    str(k): v for k, v in encounter_stats.get("worker_contributions", {}).items()
-                },
+                "total_encounters": total_encounters,
+                "pokemon_counts": pokemon_counts_dict,
+                "worker_contributions": {str(k): v for k, v in worker_contribs_dict.items()},
                 "start_time": encounter_stats.get("start_time"),
                 "end_time": datetime.datetime.now().isoformat(),
             }

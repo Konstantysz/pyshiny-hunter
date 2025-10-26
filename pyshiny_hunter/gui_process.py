@@ -4,11 +4,13 @@ This module implements the unified GUI that displays all worker emulator
 streams in a single window with aggregate statistics and shiny log.
 """
 
+from __future__ import annotations
+
 import datetime
 import multiprocessing as mp
 import time
 from queue import Empty
-from typing import Optional
+from typing import Any
 
 import glfw
 import imgui
@@ -23,12 +25,12 @@ from pyshiny_hunter.utils.gui_utils import glfw_init, opengl_create_texture, ope
 
 def unified_gui_main_process(
     num_workers: int,
-    screenshot_queue: mp.Queue,
-    control_queues: list,
-    shiny_log: list,
-    encounter_stats: dict,
-    init_status: Optional[dict] = None,
-):
+    screenshot_queue: mp.Queue[Any],
+    control_queues: list[Any],
+    shiny_log: Any,  # ListProxy
+    encounter_stats: Any,  # DictProxy
+    init_status: Any | None = None,  # DictProxy
+) -> None:
     """Main GUI process displaying all worker streams.
 
     Args:
@@ -98,9 +100,9 @@ def unified_gui_main_process(
 
     try:
         # Track which worker is under manual control (need to persist across frames)
-        controlled_worker = None
+        controlled_worker: int | None = None
         frame_count = 0  # For throttling debug logs
-        prev_key_state = set()  # Track previous key state to only send changes
+        prev_key_state: set[str] = set()  # Track previous key state to only send changes
 
         while not glfw.window_should_close(window):
             glfw.poll_events()
@@ -272,7 +274,10 @@ def unified_gui_main_process(
                         imgui.separator()
 
                         # Status indicator
-                        time_since_update = time.time() - state["last_update"]
+                        last_update = state["last_update"]
+                        time_since_update = time.time() - (
+                            float(last_update) if isinstance(last_update, (int, float)) else 0.0
+                        )
                         if time_since_update > 2.0:
                             imgui.text_colored("STALLED", 1.0, 0.0, 0.0)
                         else:
@@ -294,12 +299,16 @@ def unified_gui_main_process(
                         imgui.spacing()
 
                         # Show encounter breakdown
-                        if state["encounters"]:
+                        encounters_obj = state["encounters"]
+                        encounters_dict: dict[Any, Any] = (
+                            dict(encounters_obj) if isinstance(encounters_obj, dict) else {}
+                        )
+                        if encounters_dict:
                             imgui.separator()
                             imgui.text("Pokemon:")
-                            for pokemon, count in list(state["encounters"].items())[:5]:
+                            for pokemon, count in list(encounters_dict.items())[:5]:
                                 imgui.text(f"{pokemon}: {count}")
-                            if len(state["encounters"]) > 5:
+                            if len(encounters_dict) > 5:
                                 imgui.text_colored("...", 0.5, 0.5, 0.5)
 
                         # Manual control buttons
@@ -339,132 +348,139 @@ def unified_gui_main_process(
                         imgui.end_child()
 
             # Manual Control Modal Window
-            if controlled_worker is not None and worker_states[controlled_worker]["paused"]:
-                # Show modal window for manual control
-                imgui.open_popup("Manual Control")
+            if controlled_worker is not None:
+                assert controlled_worker is not None  # Help mypy understand this is int
+                if bool(worker_states[controlled_worker]["paused"]):
+                    # Show modal window for manual control
+                    imgui.open_popup("Manual Control")
 
-                # Center the modal window - size based on 1.5× emulator display
-                modal_width = 400
-                modal_height = 750
-                imgui.set_next_window_size(modal_width, modal_height)
-                imgui.set_next_window_position(
-                    (current_width - modal_width) // 2, (current_height - modal_height) // 2
-                )
+                    # Center the modal window - size based on 1.5× emulator display
+                    modal_width = 400
+                    modal_height = 750
+                    imgui.set_next_window_size(modal_width, modal_height)
+                    imgui.set_next_window_position(
+                        (current_width - modal_width) // 2, (current_height - modal_height) // 2
+                    )
 
-                if imgui.begin_popup_modal(
-                    "Manual Control",
-                    flags=imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_COLLAPSE,
-                )[0]:
-                    state = worker_states[controlled_worker]
+                    if imgui.begin_popup_modal(
+                        "Manual Control",
+                        flags=imgui.WINDOW_NO_RESIZE
+                        | imgui.WINDOW_NO_MOVE
+                        | imgui.WINDOW_NO_COLLAPSE,
+                    )[0]:
+                        state = worker_states[controlled_worker]
 
-                    # Title
-                    imgui.text(f"Manual Control - Worker {controlled_worker}")
-                    imgui.separator()
-                    imgui.spacing()
+                        # Title
+                        imgui.text(f"Manual Control - Worker {controlled_worker}")
+                        imgui.separator()
+                        imgui.spacing()
 
-                    # Emulator display (1.5× size: 384×576)
-                    imgui.text("Emulator Screen:")
-                    imgui.image(texture_ids[controlled_worker], 384, 576)
-                    imgui.spacing()
+                        # Emulator display (1.5× size: 384×576)
+                        imgui.text("Emulator Screen:")
+                        imgui.image(texture_ids[controlled_worker], 384, 576)
+                        imgui.spacing()
 
-                    # Keyboard controls help
-                    imgui.separator()
-                    imgui.text("Keyboard Controls:")
-                    imgui.spacing()
-                    imgui.columns(2, "controls")
-                    imgui.text("D-Pad: Arrow Keys")
-                    imgui.text("A Button: Z")
-                    imgui.text("B Button: X")
-                    imgui.text("X Button: A")
-                    imgui.next_column()
-                    imgui.text("Y Button: S")
-                    imgui.text("L Trigger: Q")
-                    imgui.text("R Trigger: W")
-                    imgui.text("Start: Enter, Select: Shift")
-                    imgui.columns(1)
-                    imgui.spacing()
+                        # Keyboard controls help
+                        imgui.separator()
+                        imgui.text("Keyboard Controls:")
+                        imgui.spacing()
+                        imgui.columns(2, "controls")
+                        imgui.text("D-Pad: Arrow Keys")
+                        imgui.text("A Button: Z")
+                        imgui.text("B Button: X")
+                        imgui.text("X Button: A")
+                        imgui.next_column()
+                        imgui.text("Y Button: S")
+                        imgui.text("L Trigger: Q")
+                        imgui.text("R Trigger: W")
+                        imgui.text("Start: Enter, Select: Shift")
+                        imgui.columns(1)
+                        imgui.spacing()
 
-                    imgui.separator()
-                    imgui.spacing()
+                        imgui.separator()
+                        imgui.spacing()
 
-                    # Resume button
-                    imgui.push_style_color(imgui.COLOR_BUTTON, 0.0, 0.6, 0.0)
-                    if imgui.button("Resume Hunter", width=380):
-                        control_queues[controlled_worker].put({"action": "resume"})
-                        controlled_worker = None
-                        prev_key_state.clear()  # Reset key state tracking
-                        imgui.close_current_popup()
-                    imgui.pop_style_color()
+                        # Resume button
+                        imgui.push_style_color(imgui.COLOR_BUTTON, 0.0, 0.6, 0.0)
+                        if (
+                            imgui.button("Resume Hunter", width=380)
+                            and controlled_worker is not None
+                        ):
+                            control_queues[controlled_worker].put({"action": "resume"})
+                            controlled_worker = None
+                            prev_key_state.clear()  # Reset key state tracking
+                            imgui.close_current_popup()
+                        imgui.pop_style_color()
 
-                    # Send complete keyboard state every frame (simple & reliable)
-                    io = imgui.get_io()
+                        # Send complete keyboard state every frame (simple & reliable)
+                        io = imgui.get_io()
 
-                    # DEBUG: Log arrow key state when pressed (not every frame to reduce spam)
-                    arrow_debug = []
-                    if glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS:
-                        arrow_debug.append("UP")
-                    if glfw.get_key(window, glfw.KEY_DOWN) == glfw.PRESS:
-                        arrow_debug.append("DOWN")
-                    if glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS:
-                        arrow_debug.append("LEFT")
-                    if glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS:
-                        arrow_debug.append("RIGHT")
-                    if arrow_debug:
-                        logger.debug(f"[GUI] Arrow keys via GLFW: {arrow_debug}")
+                        # DEBUG: Log arrow key state when pressed (not every frame to reduce spam)
+                        arrow_debug = []
+                        if glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS:
+                            arrow_debug.append("UP")
+                        if glfw.get_key(window, glfw.KEY_DOWN) == glfw.PRESS:
+                            arrow_debug.append("DOWN")
+                        if glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS:
+                            arrow_debug.append("LEFT")
+                        if glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS:
+                            arrow_debug.append("RIGHT")
+                        if arrow_debug:
+                            logger.debug(f"[GUI] Arrow keys via GLFW: {arrow_debug}")
 
-                    # Build list of currently pressed keys using config mapping
-                    pressed_keys = []
+                        # Build list of currently pressed keys using config mapping
+                        pressed_keys = []
 
-                    # Arrow keys: Use GLFW directly (GlfwRenderer blocks them from ImGui)
-                    if glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["UP"])
-                    if glfw.get_key(window, glfw.KEY_DOWN) == glfw.PRESS:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["DOWN"])
-                    if glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["LEFT"])
-                    if glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["RIGHT"])
+                        # Arrow keys: Use GLFW directly (GlfwRenderer blocks them from ImGui)
+                        if glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["UP"])
+                        if glfw.get_key(window, glfw.KEY_DOWN) == glfw.PRESS:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["DOWN"])
+                        if glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["LEFT"])
+                        if glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["RIGHT"])
 
-                    # Face buttons and other keys from ImGui
-                    if io.keys_down[ord("Z")]:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["Z"])
-                    if io.keys_down[ord("X")]:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["X"])
-                    if io.keys_down[ord("A")]:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["A"])
-                    if io.keys_down[ord("S")]:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["S"])
-                    if io.keys_down[ord("Q")]:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["Q"])
-                    if io.keys_down[ord("W")]:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["W"])
-                    if io.keys_down[imgui.KEY_ENTER]:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["ENTER"])
-                    if io.key_shift:
-                        pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["SHIFT"])
+                        # Face buttons and other keys from ImGui
+                        if io.keys_down[ord("Z")]:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["Z"])
+                        if io.keys_down[ord("X")]:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["X"])
+                        if io.keys_down[ord("A")]:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["A"])
+                        if io.keys_down[ord("S")]:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["S"])
+                        if io.keys_down[ord("Q")]:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["Q"])
+                        if io.keys_down[ord("W")]:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["W"])
+                        if io.keys_down[imgui.KEY_ENTER]:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["ENTER"])
+                        if io.key_shift:
+                            pressed_keys.append(config.MANUAL_CONTROL_KEY_MAP["SHIFT"])
 
-                    # DEBUG: Show currently pressed keys
-                    imgui.spacing()
-                    imgui.separator()
-                    imgui.text("Debug - Currently Pressed:")
-                    if pressed_keys:
-                        for key in pressed_keys:
-                            imgui.text(f"  {key}")
-                    else:
-                        imgui.text_colored("  (none)", 0.5, 0.5, 0.5)
+                        # DEBUG: Show currently pressed keys
+                        imgui.spacing()
+                        imgui.separator()
+                        imgui.text("Debug - Currently Pressed:")
+                        if pressed_keys:
+                            for key in pressed_keys:
+                                imgui.text(f"  {key}")
+                        else:
+                            imgui.text_colored("  (none)", 0.5, 0.5, 0.5)
 
-                    # Only send keyboard state when it CHANGES (eliminates queue flooding)
-                    current_key_state = set(pressed_keys)
-                    if current_key_state != prev_key_state:
-                        control_queues[controlled_worker].put(
-                            {"action": "input", "type": "key_state", "keys": pressed_keys}
-                        )
-                        logger.debug(
-                            f"[GUI] Key state changed: {list(prev_key_state)} → {pressed_keys}"
-                        )
-                        prev_key_state = current_key_state
+                        # Only send keyboard state when it CHANGES (eliminates queue flooding)
+                        current_key_state = set(pressed_keys)
+                        if current_key_state != prev_key_state and controlled_worker is not None:
+                            control_queues[controlled_worker].put(
+                                {"action": "input", "type": "key_state", "keys": pressed_keys}
+                            )
+                            logger.debug(
+                                f"[GUI] Key state changed: {list(prev_key_state)} → {pressed_keys}"
+                            )
+                            prev_key_state = current_key_state
 
-                    imgui.end_popup()
+                        imgui.end_popup()
 
             # Sidebar with Aggregate Stats and Shiny Log (uses actual window size)
             imgui.set_next_window_position(current_width - sidebar_width, 0)
@@ -503,7 +519,9 @@ def unified_gui_main_process(
 
                 # Calculate average FPS across all workers
                 worker_fps_values = [
-                    state["fps"] for state in worker_states.values() if state["fps"] > 0
+                    float(state["fps"])
+                    for state in worker_states.values()
+                    if isinstance(state["fps"], (int, float)) and float(state["fps"]) > 0
                 ]
                 if worker_fps_values:
                     avg_fps = sum(worker_fps_values) / len(worker_fps_values)

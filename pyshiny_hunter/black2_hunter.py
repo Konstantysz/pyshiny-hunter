@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 import re
 from difflib import get_close_matches
-from typing import Optional
 
 import cv2 as cv
 import numpy as np
@@ -31,7 +32,7 @@ class Black2Hunter(Hunter):
 
     characters_in_pokemon_names: str
 
-    def __init__(self, hunted_pokemon: Optional[list[str] | str] = None):
+    def __init__(self, hunted_pokemon: list[str] | str | None = None):
         """Initialize Black2Hunter with Pokemon database and character whitelist.
 
         Loads Pokemon names from Gen 1-5 CSV files and creates a character whitelist
@@ -46,23 +47,23 @@ class Black2Hunter(Hunter):
         """
         Hunter.__init__(self, hunted_pokemon)
 
-        self.pokemon_database = {}
+        self.pokemon_database: dict[str, int] = {}
         for gen_file in config.POKEMON_CSV_FILES:
             try:
                 with open(f"{config.POKEMON_DATABASE_PATH}{gen_file}", encoding="utf-8") as file:
                     next(file)  # Skip the first line of the file as it is header.
-                    self.pokemon_database.update(
+                    entries = (
                         (
-                            (
-                                line.split(",")[1].strip(),
-                                int(line.split(",")[0].strip()),
-                            )
-                            if len(line.split(",")) > 1
-                            else None
+                            line.split(",")[1].strip(),
+                            int(line.split(",")[0].strip()),
                         )
                         for line in file
-                        if line.strip() and "," in line and not line.startswith("number")
+                        if line.strip()
+                        and "," in line
+                        and not line.startswith("number")
+                        and len(line.split(",")) > 1
                     )
+                    self.pokemon_database.update(entries)
             except FileNotFoundError:
                 logger.warning(f"File {gen_file} not found. Skipping.")
 
