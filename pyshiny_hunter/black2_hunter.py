@@ -284,10 +284,18 @@ class Black2Hunter(Hunter):
             output_dir_resolved = output_dir.resolve()
 
             # Ensure paths are within output directory (prevent path traversal)
-            if not str(screenshot_path_resolved).startswith(str(output_dir_resolved)):
-                raise ValueError("Screenshot path outside output directory")
-            if not str(metadata_path_resolved).startswith(str(output_dir_resolved)):
-                raise ValueError("Metadata path outside output directory")
+            # Use relative_to() for proper path containment check (Python 3.9+)
+            try:
+                screenshot_path_resolved.relative_to(output_dir_resolved)
+                metadata_path_resolved.relative_to(output_dir_resolved)
+            except ValueError as e:
+                raise ValueError(f"Paths outside output directory: {e}") from e
+
+            # Check for symlinks to prevent TOCTOU attacks
+            if screenshot_path_resolved.is_symlink():
+                raise ValueError("Symlinks not allowed in output directory")
+            if metadata_path_resolved.is_symlink():
+                raise ValueError("Symlinks not allowed in output directory")
         except (ValueError, OSError) as e:
             logger.error(f"Path validation failed: {e}")
             return
@@ -310,7 +318,7 @@ class Black2Hunter(Hunter):
             "ocr_config": {
                 "engine": "EasyOCR",
                 "model": "english",
-                "gpu_enabled": False,
+                "gpu_enabled": self.enhanced_ocr.gpu_enabled,  # Use actual GPU state
                 "resize_factor": config.OCR_RESIZE_FACTOR,
                 "binary_threshold": config.OCR_BINARY_THRESHOLD,
                 "preprocessing": "upscale_2x_lanczos + grayscale + binary_threshold + morphological_opening",

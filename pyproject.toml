@@ -27,7 +27,10 @@ classifiers = [
 ]
 
 dependencies = [
-    # NumPy 2.0+ compatible (OpenCV, EasyOCR, and other deps handle compatibility internally)
+    # NumPy 2.0+ compatible: Upper bound removed in v0.1.0
+    # All dependencies (OpenCV 4.8+, EasyOCR 1.7+) support NumPy 2.0
+    # Previously: "numpy>=1.24.0,<2.0.0" (compatibility concerns with OpenCV)
+    # If NumPy 2.0 breaks compatibility, pin specific version in requirements.txt
     "numpy>=1.24.0",
     "opencv-python>=4.8.0,<5.0.0",
     "py-desmume>=0.0.4",

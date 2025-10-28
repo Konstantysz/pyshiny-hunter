@@ -84,6 +84,7 @@ class EnhancedOCR:
         self.pokemon_database = pokemon_database
         self.pokemon_names = set(pokemon_database.keys())
         self._reader: easyocr.Reader | None = None
+        self.gpu_enabled: bool = False  # Track GPU state for metadata
 
         # Initialize SymSpell with Pokemon dictionary
         self.symspell = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
@@ -116,8 +117,28 @@ class EnhancedOCR:
             logger.info("PyTorch not available, using CPU for EasyOCR")
 
         logger.info("Loading EasyOCR model (this may take a few seconds)...")
-        self._reader = easyocr.Reader(["en"], gpu=gpu_available, verbose=False)
-        logger.info(f"EasyOCR model loaded successfully (GPU: {gpu_available})")
+        try:
+            self._reader = easyocr.Reader(["en"], gpu=gpu_available, verbose=False)
+            self.gpu_enabled = gpu_available  # Store GPU state for metadata
+            logger.info(f"EasyOCR model loaded successfully (GPU: {self.gpu_enabled})")
+        except Exception as e:
+            logger.error(f"Failed to load EasyOCR model: {e}", exc_info=True)
+            # Set reader to None to indicate failure
+            self._reader = None
+            # Try fallback to CPU if GPU failed
+            if gpu_available:
+                logger.info("Retrying EasyOCR with CPU fallback...")
+                try:
+                    self._reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+                    self.gpu_enabled = False  # CPU fallback
+                    logger.info("EasyOCR loaded successfully with CPU fallback")
+                except Exception as fallback_error:
+                    logger.error(f"CPU fallback also failed: {fallback_error}", exc_info=True)
+                    raise RuntimeError(
+                        "Failed to load EasyOCR with both GPU and CPU"
+                    ) from fallback_error
+            else:
+                raise
 
     @property
     def reader(self) -> easyocr.Reader:
@@ -182,13 +203,18 @@ class EnhancedOCR:
         # STAGE 2: SymSpell correction (handles 1-2 character errors)
         symspell_result = self._apply_symspell(formatted_text)
         if symspell_result:
-            logger.debug(f"Stage 2 (symspell): '{formatted_text}' -> '{symspell_result}'")
+            # Check if correction was needed
+            was_corrected = symspell_result != formatted_text
+            logger.debug(
+                f"Stage 2 (symspell): '{formatted_text}' -> '{symspell_result}' "
+                f"(corrected: {was_corrected})"
+            )
             return OCRResult(
                 text=symspell_result,
                 raw_text=raw_text,
                 confidence=0.95,  # High confidence for SymSpell matches
                 stage="symspell",
-                exact_match=True,
+                exact_match=not was_corrected,  # True only if no correction needed
             )
 
         # STAGE 3: Fuzzy matching (fallback for 3+ errors)
