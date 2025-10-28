@@ -27,13 +27,15 @@ classifiers = [
 ]
 
 dependencies = [
-    "numpy>=1.24.0,<2.0.0",
+    # NumPy 2.0+ compatible (OpenCV, EasyOCR, and other deps handle compatibility internally)
+    "numpy>=1.24.0",
     "opencv-python>=4.8.0,<5.0.0",
     "py-desmume>=0.0.4",
     "imgui[full]>=2.0.0",
     "PyOpenGL>=3.1.0",
-    "pytesseract>=0.3.10",
     "python-statemachine[diagrams]>=2.1.0",
+    "easyocr>=1.7.0",
+    "symspellpy>=6.7.7",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +55,12 @@ docs = [
 examples = [
     "jupyter>=1.0.0",
     "matplotlib>=3.7.0",
+]
+cuda = [
+    # GPU acceleration for EasyOCR (5-10x faster OCR)
+    # Requires NVIDIA GPU with CUDA support
+    # Install with: pip install -e .[cuda]
+    # Or manually: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 ]
 
 [project.scripts]

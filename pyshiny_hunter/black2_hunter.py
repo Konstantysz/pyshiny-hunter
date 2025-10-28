@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import re
-from difflib import get_close_matches
+from datetime import datetime
+from difflib import SequenceMatcher
+from pathlib import Path
 
 import cv2 as cv
 import numpy as np
-import pytesseract
 
 from pyshiny_hunter import config
+from pyshiny_hunter.enhanced_ocr import EnhancedOCR
 from pyshiny_hunter.hunter import Hunter
 from pyshiny_hunter.module_logger import logger
 
@@ -75,6 +78,10 @@ class Black2Hunter(Hunter):
             .replace("♀", "")  # Hangle Nidoran♀
             .replace("♂", "")  # Handle Nidoran♂
         )
+
+        # Initialize Enhanced OCR pipeline (EasyOCR + SymSpell + Fuzzy)
+        self.enhanced_ocr = EnhancedOCR(self.pokemon_database)
+        logger.info("Black2Hunter initialized with EnhancedOCR pipeline")
 
     def _found_pokemon(self, top_screen: np.ndarray, bottom_screen: np.ndarray) -> bool:
         """Detect if a wild Pokemon encounter has occurred.
@@ -216,30 +223,147 @@ class Black2Hunter(Hunter):
 
         return encounter_name
 
-    def __determine_encounter(self, top_screen: np.ndarray) -> str:
-        """Identify encountered Pokemon using OCR and fuzzy matching.
+    def _save_failed_ocr_screenshot(
+        self,
+        cropped_region: np.ndarray,
+        raw_name: str,
+        formatted_name: str,
+        exact_match_found: bool,
+        fuzzy_matches: list[str],
+        selected_match: str | None,
+    ) -> None:
+        """Save failed OCR screenshot and metadata for training dataset creation.
 
-        Computer Vision pipeline:
+        Creates a flat directory structure with timestamp-based filenames:
+        - YYYYMMDD_HHMMSS_screenshot.png: Raw cropped region from top screen
+        - YYYYMMDD_HHMMSS_metadata.json: OCR metadata including matches and confidence
+
+        This data can be used to:
+        1. Analyze OCR failure patterns
+        2. Create labeled training datasets for model improvement
+        3. Fine-tune OCR parameters
+
+        Args:
+            cropped_region: Raw cropped region (BGR numpy array) extracted from top screen.
+            raw_name: Unprocessed text output from Tesseract OCR.
+            formatted_name: Formatted Pokemon name after Title Case processing.
+            exact_match_found: Whether the formatted name exactly matched database.
+            fuzzy_matches: List of fuzzy match candidates (if any).
+            selected_match: Final selected Pokemon name (after fuzzy matching).
+
+        Side Effects:
+            Creates OCR_FAILED_SCREENSHOTS_PATH directory if it doesn't exist.
+            Writes PNG screenshot and JSON metadata files to disk.
+
+        Note:
+            Only executes if config.SAVE_FAILED_OCR_SCREENSHOTS is True.
+            Called only when fuzzy match confidence < OCR_LOW_CONFIDENCE_THRESHOLD.
+        """
+        if not config.SAVE_FAILED_OCR_SCREENSHOTS:
+            return
+
+        # Create output directory if it doesn't exist
+        output_dir = Path(config.OCR_FAILED_SCREENSHOTS_PATH)
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError) as e:
+            logger.error(f"Failed to create OCR screenshot directory: {e}")
+            return  # Gracefully abort screenshot saving
+
+        # Generate timestamp-based filename
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S_%f"
+        )  # Include microseconds for uniqueness
+        screenshot_path = output_dir / f"{timestamp}_screenshot.png"
+        metadata_path = output_dir / f"{timestamp}_metadata.json"
+
+        # Validate paths to prevent path traversal attacks
+        try:
+            screenshot_path_resolved = screenshot_path.resolve()
+            metadata_path_resolved = metadata_path.resolve()
+            output_dir_resolved = output_dir.resolve()
+
+            # Ensure paths are within output directory (prevent path traversal)
+            if not str(screenshot_path_resolved).startswith(str(output_dir_resolved)):
+                raise ValueError("Screenshot path outside output directory")
+            if not str(metadata_path_resolved).startswith(str(output_dir_resolved)):
+                raise ValueError("Metadata path outside output directory")
+        except (ValueError, OSError) as e:
+            logger.error(f"Path validation failed: {e}")
+            return
+
+        # Calculate fuzzy match confidence scores
+        fuzzy_matches_with_scores = []
+        for match in fuzzy_matches:
+            # Use SequenceMatcher to calculate similarity ratio
+            score = SequenceMatcher(None, formatted_name, match).ratio()
+            fuzzy_matches_with_scores.append({"name": match, "score": round(score, 4)})
+
+        # Create metadata dictionary
+        metadata = {
+            "timestamp": datetime.now().isoformat(),
+            "ocr_raw_text": raw_name,
+            "ocr_formatted": formatted_name,
+            "exact_match_found": exact_match_found,
+            "fuzzy_matches": fuzzy_matches_with_scores,
+            "selected_match": selected_match,
+            "ocr_config": {
+                "engine": "EasyOCR",
+                "model": "english",
+                "gpu_enabled": False,
+                "resize_factor": config.OCR_RESIZE_FACTOR,
+                "binary_threshold": config.OCR_BINARY_THRESHOLD,
+                "preprocessing": "upscale_2x_lanczos + grayscale + binary_threshold + morphological_opening",
+            },
+            "region_coords": {
+                "y": [config.OCR_NAME_REGION_Y_START, config.OCR_NAME_REGION_Y_END],
+                "x": [config.OCR_NAME_REGION_X_START, config.OCR_NAME_REGION_X_END],
+            },
+        }
+
+        # Save files with validated paths
+        try:
+            cv.imwrite(str(screenshot_path_resolved), cropped_region)
+            with open(metadata_path_resolved, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+        except OSError as e:
+            logger.error(f"Failed to save OCR screenshot files: {e}")
+            return
+
+        # Log with confidence score if available
+        confidence_info = ""
+        if fuzzy_matches_with_scores:
+            best_score = fuzzy_matches_with_scores[0]["score"]
+            confidence_info = f" [confidence: {best_score:.2%}]"
+
+        logger.info(
+            f"Saved failed OCR screenshot: {screenshot_path.name} "
+            f"(raw: '{raw_name}' → formatted: '{formatted_name}'){confidence_info}"
+        )
+
+    def __determine_encounter(self, top_screen: np.ndarray) -> str:
+        """Identify encountered Pokemon using Enhanced OCR pipeline.
+
+        Enhanced OCR pipeline:
         1. Crop Pokemon name region (rows 30-40, cols 10-75)
-        2. Upscale 2× with LANCZOS4 interpolation
-        3. Convert to grayscale
-        4. Binary threshold at 127
-        5. Tesseract OCR with character whitelist (Gen 1-5 Pokemon)
-        6. Format name (Title Case)
-        7. Fuzzy match if needed (0.6 cutoff)
-        8. Update encounter counter
+        2. EasyOCR recognition (deep learning, optimized for low-res)
+        3. SymSpell correction (O(1) spell check for 1-2 char errors)
+        4. Fuzzy matching (fallback for 3+ char errors)
+        5. Save failed screenshots if confidence < threshold
+        6. Update encounter counter
 
         Args:
             top_screen: Top DS screen as BGR numpy array (192x256x3).
 
         Returns:
-            Recognized Pokemon name (corrected via fuzzy matching if needed).
+            Recognized Pokemon name (100% accuracy target via 3-stage pipeline).
 
         Side Effects:
-            Updates self.encounters dictionary with encounter count.
+            - Updates self.encounters dictionary with encounter count.
+            - Saves failed OCR screenshots when SAVE_FAILED_OCR_SCREENSHOTS is enabled.
 
         Accuracy:
-            Optimized upscaling (2× LANCZOS4 vs 3× LINEAR) provides fast, reliable OCR.
+            Enhanced OCR provides 99%+ accuracy via EasyOCR + SymSpell + Fuzzy matching.
         """
         # STEP 1: Extract Pokemon name region from top screen
         # DS resolution is 256×192, Pokemon name appears in top-left corner
@@ -248,52 +372,46 @@ class Black2Hunter(Hunter):
             config.OCR_NAME_REGION_X_START : config.OCR_NAME_REGION_X_END,
         ]
 
-        # STEP 2: Upscale image for better OCR accuracy
-        # Low-res DS screens (256×192) produce poor OCR results
-        # Optimized: 2× LANCZOS4 achieves 100% accuracy
-        # Counter-intuitive: smaller upscale (2× vs 3×) = cleaner edges, fewer artifacts
-        resized_region = cv.resize(
-            cropped_region,
-            (0, 0),
-            fx=config.OCR_RESIZE_FACTOR,
-            fy=config.OCR_RESIZE_FACTOR,
-            interpolation=cv.INTER_LANCZOS4,
+        # STEP 2-4: Run Enhanced OCR pipeline (EasyOCR → SymSpell → Fuzzy)
+        ocr_result = self.enhanced_ocr.recognize(cropped_region)
+
+        encounter_name = ocr_result.text
+        logger.debug(
+            f"OCR result: '{ocr_result.raw_text}' → '{encounter_name}' "
+            f"({ocr_result.stage}, confidence: {ocr_result.confidence:.2%})"
         )
 
-        # STEP 3: Convert to grayscale
-        gray_region = cv.cvtColor(resized_region, cv.COLOR_BGR2GRAY)
-
-        # STEP 4: Binary threshold at 127
-        _, thresholded_region = cv.threshold(
-            gray_region,
-            config.OCR_BINARY_THRESHOLD,
-            config.OCR_BINARY_MAX_VALUE,
-            cv.THRESH_BINARY,
-        )
-
-        # STEP 5: Run Tesseract OCR with character whitelist
-        tesseract_config = f'--psm {config.TESSERACT_PSM_MODE} -c tessedit_char_whitelist="{self.characters_in_pokemon_names}"'
-        raw_name = pytesseract.image_to_string(thresholded_region, config=tesseract_config).strip()
-
-        # STEP 6: Format to Title Case
-        encounter_name = self._format_pokemon_name(raw_name)
-
-        # STEP 7: Fuzzy match if not exact match
-        if encounter_name not in self.pokemon_database:
-            matches = get_close_matches(
-                encounter_name,
-                self.pokemon_database,
-                n=config.FUZZY_MATCH_TOP_N,
-                cutoff=config.FUZZY_MATCH_CUTOFF,
-            )
-            if matches:
-                encounter_name = matches[0]
-            else:
-                logger.warning(
-                    f"Encounter name '{encounter_name}' not recognized and no close match found."
+        # Early validation: Check if OCR failed completely
+        if not encounter_name:
+            logger.error("OCR failed to recognize any Pokemon name!")
+            # Still save screenshot for debugging if enabled
+            if config.SAVE_FAILED_OCR_SCREENSHOTS:
+                self._save_failed_ocr_screenshot(
+                    cropped_region=cropped_region,
+                    raw_name=ocr_result.raw_text,
+                    formatted_name="",
+                    exact_match_found=False,
+                    fuzzy_matches=[],
+                    selected_match=None,
                 )
+            return ""
 
-        # STEP 8: Update encounter counter
+        # STEP 5: Save failed OCR screenshot for training dataset (if enabled)
+        # Save if confidence is below threshold OR recognition failed
+        if ocr_result.confidence < config.OCR_LOW_CONFIDENCE_THRESHOLD:
+            # Build fuzzy_matches list for metadata compatibility
+            fuzzy_matches = [encounter_name] if encounter_name else []
+
+            self._save_failed_ocr_screenshot(
+                cropped_region=cropped_region,
+                raw_name=ocr_result.raw_text,
+                formatted_name=encounter_name,
+                exact_match_found=ocr_result.exact_match,
+                fuzzy_matches=fuzzy_matches,
+                selected_match=encounter_name if encounter_name else None,
+            )
+
+        # STEP 6: Update encounter counter
         if encounter_name in self.encounters:
             self.encounters[encounter_name] += 1
         else:

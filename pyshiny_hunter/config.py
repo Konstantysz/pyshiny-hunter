@@ -145,3 +145,25 @@ MANUAL_CONTROL_KEY_MAP: dict[str, str] = {
     "ENTER": "KEY_START",
     "SHIFT": "KEY_SELECT",  # Both left and right shift (detected via io.key_shift)
 }
+
+# =============================================================================
+# OCR Training Dataset Collection
+# =============================================================================
+
+# Enable saving screenshots when OCR fails to recognize Pokemon names
+# When enabled, saves cropped regions and metadata for creating training datasets
+# Default: False (enable manually when collecting data for model improvement)
+SAVE_FAILED_OCR_SCREENSHOTS: bool = False
+
+# Directory path for saving failed OCR screenshots and metadata
+# Saved in flat structure: YYYYMMDD_HHMMSS_screenshot.png + metadata.json
+OCR_FAILED_SCREENSHOTS_PATH: str = "data/ocr_training_dataset/"
+
+# Minimum confidence threshold for saving failed OCR screenshots
+# Only screenshots with fuzzy match confidence below this threshold will be saved
+# Range: 0.0-1.0, where 1.0 = perfect match
+# Examples:
+#   0.8 = Save only low-confidence matches (recommended for collecting problematic cases)
+#   0.6 = Save medium-confidence matches (more data, some false positives)
+#   1.0 = Save all non-exact matches (maximum dataset size)
+OCR_LOW_CONFIDENCE_THRESHOLD: float = 0.8

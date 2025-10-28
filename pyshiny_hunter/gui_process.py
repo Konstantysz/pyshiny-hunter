@@ -154,21 +154,19 @@ def unified_gui_main_process(
             worker_panel_width = (available_width / cols) - 10  # Distribute evenly across columns
 
             # Check if all workers are ready (initialization complete)
-            # Workers are considered "ready" when they reach "waiting" or "ready" status
-            # "waiting" = finished desync, waiting at barrier for others
-            # "ready" = passed barrier, started main loop
+            # Workers progress through: "loading" → "desyncing" → "waiting" → "loading_ocr" → "ready"
+            # GUI stays in initialization mode until ALL workers reach "ready" status
             # Convert init_status once per frame to avoid redundant dict conversions
             init_status_snapshot = dict(init_status) if init_status is not None else {}
             all_workers_ready = False
             if init_status_snapshot:
-                # Count workers that are either waiting at barrier OR fully ready
-                workers_at_barrier_or_ready = sum(
-                    1 for s in init_status_snapshot.values() if s in ("waiting", "ready")
-                )
-                all_workers_ready = workers_at_barrier_or_ready == num_workers
+                # Count workers that are fully ready (not just waiting)
+                ready_count = sum(1 for s in init_status_snapshot.values() if s == "ready")
+                all_workers_ready = ready_count == num_workers
             else:
-                # No init tracking, assume ready immediately
-                all_workers_ready = True
+                # No init tracking - show progress bar until we get first status update
+                # This prevents showing worker cards before workers even start reporting
+                all_workers_ready = False
 
             imgui.set_next_window_position(0, 0)
             imgui.set_next_window_size(workers_width, current_height)
@@ -228,6 +226,10 @@ def unified_gui_main_process(
                         elif status == "waiting":
                             imgui.text_colored(
                                 f"Worker {worker_id}: Waiting for others...", 1.0, 1.0, 0.0
+                            )
+                        elif status == "loading_ocr":
+                            imgui.text_colored(
+                                f"Worker {worker_id}: Loading OCR models...", 0.8, 0.5, 1.0
                             )
                         elif status == "desyncing":
                             imgui.text_colored(

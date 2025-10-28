@@ -77,6 +77,7 @@ def headless_worker(
     encounter_stats: DictProxy[Any, Any],
     desync_barrier: Barrier | None = None,
     init_status: DictProxy[Any, Any] | None = None,
+    stats_lock: Any | None = None,
 ) -> None:
     """Headless worker process running emulator and streaming screenshots.
 
@@ -91,6 +92,7 @@ def headless_worker(
         encounter_stats: Shared dict for aggregate encounter statistics
         desync_barrier: Optional multiprocessing.Barrier for synchronizing desync completion
         init_status: Shared dict for reporting initialization progress to GUI
+        stats_lock: Optional lock for thread-safe encounter stats updates
     """
     try:
         # Report status: Loading emulator
@@ -132,14 +134,25 @@ def headless_worker(
                 f"guaranteed unique RNG state"
             )
 
-        # Wait for all workers to complete desynchronization before starting main loop
+        # Report status: Loading OCR models
+        if init_status is not None:
+            init_status[worker_id] = "loading_ocr"
+
+        # Create hunter (this starts loading EasyOCR in background)
+        hunter = Black2Hunter()
+
+        # Wait for EasyOCR to finish loading before barrier
+        # This ensures clean startup without background loading interfering with main loop
+        _ = hunter.enhanced_ocr.reader  # Access reader to wait for background load
+
+        # Wait for all workers to complete OCR loading before starting main loop
         # This ensures GUI shows all emulator streams simultaneously (synchronized start)
         if desync_barrier is not None:
             # Report status: Waiting for other workers
             if init_status is not None:
                 init_status[worker_id] = "waiting"
 
-            logger.info(f"[Worker {worker_id}] Desync complete, waiting for other workers...")
+            logger.info(f"[Worker {worker_id}] OCR loaded, waiting for other workers...")
             try:
                 desync_barrier.wait(timeout=30)  # Max 30s wait for all workers
             except Exception as e:
@@ -155,18 +168,16 @@ def headless_worker(
                 ) from e
             logger.info(f"[Worker {worker_id}] All workers ready, starting synchronized!")
 
-        # Report status: Ready to start
-        if init_status is not None:
-            init_status[worker_id] = "ready"
-
-        # Create hunter
-        hunter = Black2Hunter()
         battle_ready_frame = -1
         battle_start_frame = -1
 
         # Manual control state
         paused = False  # When True, hunter state machine is paused for manual control
         active_keys: set[str] = set()  # Track currently pressed keys for manual control
+
+        # Report status: Ready to start
+        if init_status is not None:
+            init_status[worker_id] = "ready"
 
         logger.info(f"[Worker {worker_id}] Initialized, starting main loop...")
 
@@ -255,24 +266,44 @@ def headless_worker(
                     # New encounter(s) of this pokemon!
                     new_encounters = count - last_count
 
-                    # Update total encounters
-                    encounter_stats["total_encounters"] = (
-                        encounter_stats.get("total_encounters", 0) + new_encounters
-                    )
+                    # Update stats with lock to prevent race conditions
+                    if stats_lock is not None:
+                        with stats_lock:
+                            # Update total encounters
+                            encounter_stats["total_encounters"] = (
+                                encounter_stats.get("total_encounters", 0) + new_encounters
+                            )
 
-                    # Update per-Pokemon counts
-                    if "pokemon_counts" not in encounter_stats:
-                        encounter_stats["pokemon_counts"] = {}
-                    pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
-                    pokemon_counts[pokemon] = pokemon_counts.get(pokemon, 0) + new_encounters
-                    encounter_stats["pokemon_counts"] = pokemon_counts
+                            # Update per-Pokemon counts
+                            if "pokemon_counts" not in encounter_stats:
+                                encounter_stats["pokemon_counts"] = {}
+                            pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
+                            pokemon_counts[pokemon] = (
+                                pokemon_counts.get(pokemon, 0) + new_encounters
+                            )
+                            encounter_stats["pokemon_counts"] = pokemon_counts
 
-                    # Update worker contribution
-                    if "worker_contributions" not in encounter_stats:
-                        encounter_stats["worker_contributions"] = {}
-                    worker_contribs = dict(encounter_stats.get("worker_contributions", {}))
-                    worker_contribs[worker_id] = sum(current_encounters.values())
-                    encounter_stats["worker_contributions"] = worker_contribs
+                            # Update worker contribution
+                            if "worker_contributions" not in encounter_stats:
+                                encounter_stats["worker_contributions"] = {}
+                            worker_contribs = dict(encounter_stats.get("worker_contributions", {}))
+                            worker_contribs[worker_id] = sum(current_encounters.values())
+                            encounter_stats["worker_contributions"] = worker_contribs
+                    else:
+                        # Fallback: no lock provided (backward compatibility)
+                        encounter_stats["total_encounters"] = (
+                            encounter_stats.get("total_encounters", 0) + new_encounters
+                        )
+                        if "pokemon_counts" not in encounter_stats:
+                            encounter_stats["pokemon_counts"] = {}
+                        pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
+                        pokemon_counts[pokemon] = pokemon_counts.get(pokemon, 0) + new_encounters
+                        encounter_stats["pokemon_counts"] = pokemon_counts
+                        if "worker_contributions" not in encounter_stats:
+                            encounter_stats["worker_contributions"] = {}
+                        worker_contribs = dict(encounter_stats.get("worker_contributions", {}))
+                        worker_contribs[worker_id] = sum(current_encounters.values())
+                        encounter_stats["worker_contributions"] = worker_contribs
 
             last_encounters = dict(current_encounters)
 
@@ -405,6 +436,9 @@ def launch_multi_mode(
     # Each worker reports: "loading" → "desyncing" → "waiting" → "ready"
     init_status: DictProxy[Any, Any] = manager.dict()
 
+    # Lock for thread-safe encounter stats updates (prevents race conditions)
+    stats_lock = manager.Lock()
+
     # Barrier for synchronizing desync completion
     # All workers wait at barrier after desync, then start streaming simultaneously
     desync_barrier = mp.Barrier(num_workers) if randomize_start else None
@@ -425,6 +459,7 @@ def launch_multi_mode(
                 encounter_stats,
                 desync_barrier,
                 init_status,
+                stats_lock,
             ),
         )
         p.start()
