@@ -198,6 +198,36 @@ pyshiny-hunter/
 └── .github/workflows/          # CI/CD (multi-OS, multi-Python)
 ```
 
+## 📊 Performance Benchmarks
+
+Want to measure your system's performance? Run the included benchmark suite:
+
+```bash
+# Install benchmark dependencies
+pip install -e ".[examples]"
+
+# Quick benchmark (2-3 minutes)
+python examples/benchmark_performance.py --rom roms/black2.nds --state savestate.dst --quick
+
+# Full benchmark suite (5-10 minutes)
+python examples/benchmark_performance.py --rom roms/black2.nds --state savestate.dst
+```
+
+**What's Measured:**
+
+- **OCR Performance**: CPU vs GPU speed comparison (operations per second)
+- **Multi-Worker Scaling**: 1, 2, 4, 8 workers with theoretical encounters/min
+- **Memory Usage**: Per-worker memory consumption
+- **Startup Time**: Background OCR loading performance
+
+**Output:**
+
+- `benchmark_results.json` - Raw performance data
+- `benchmark_results.md` - Formatted tables
+- Performance charts (PNG) - Visual comparisons
+
+See [examples/README.md](examples/README.md) for detailed benchmarking documentation.
+
 ## ⚖️ Legal Notice
 
 **Important**: This tool requires a Pokémon Black 2 ROM file.
