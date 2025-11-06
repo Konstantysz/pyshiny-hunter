@@ -48,6 +48,8 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
+    "pytest-xdist>=3.5.0",
+    "filelock>=3.13.0",
     "pre-commit>=3.5.0",
 ]
 docs = [

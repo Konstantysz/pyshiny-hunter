@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import cv2 as cv
 import pytest
@@ -33,29 +34,38 @@ def pokemon_database() -> dict[str, int]:
 
 
 @pytest.fixture
-def enhanced_ocr(pokemon_database: dict[str, int]) -> EnhancedOCR:
-    """Initialize Enhanced OCR with test database."""
-    return EnhancedOCR(pokemon_database)
+def enhanced_ocr(pokemon_database: dict[str, int], easyocr_model_lock) -> EnhancedOCR:
+    """Initialize Enhanced OCR with test database.
+
+    Uses file lock to prevent race conditions when multiple test processes
+    try to download EasyOCR models simultaneously (Windows CI issue).
+    """
+    with easyocr_model_lock:
+        return EnhancedOCR(pokemon_database)
 
 
 class TestEnhancedOCRInitialization:
     """Test Enhanced OCR initialization."""
 
-    def test_initialization_creates_symspell_dictionary(self, pokemon_database: dict[str, int]):
+    def test_initialization_creates_symspell_dictionary(
+        self, pokemon_database: dict[str, int], easyocr_model_lock
+    ):
         """Test that SymSpell dictionary is created from Pokemon database."""
-        ocr = EnhancedOCR(pokemon_database)
+        with easyocr_model_lock:
+            ocr = EnhancedOCR(pokemon_database)
 
-        assert ocr.pokemon_names == set(pokemon_database.keys())
-        assert len(ocr.pokemon_names) == len(pokemon_database)
-        assert ocr.symspell is not None
+            assert ocr.pokemon_names == set(pokemon_database.keys())
+            assert len(ocr.pokemon_names) == len(pokemon_database)
+            assert ocr.symspell is not None
 
-    def test_easyocr_reader_lazy_loads(self, pokemon_database: dict[str, int]):
+    def test_easyocr_reader_lazy_loads(self, pokemon_database: dict[str, int], easyocr_model_lock):
         """Test that EasyOCR reader starts loading in background."""
-        ocr = EnhancedOCR(pokemon_database)
+        with easyocr_model_lock:
+            ocr = EnhancedOCR(pokemon_database)
 
-        # Reader should be loading or loaded
-        assert hasattr(ocr, "_reader")
-        assert hasattr(ocr, "_loading_thread")
+            # Reader should be loading or loaded
+            assert hasattr(ocr, "_reader")
+            assert hasattr(ocr, "_loading_thread")
 
 
 class TestOCRStages:
@@ -217,8 +227,17 @@ class TestEnhancedOCRIntegration:
 class TestBackgroundLoading:
     """Test background loading of EasyOCR model."""
 
-    def test_reader_loads_in_background(self, pokemon_database: dict[str, int]):
-        """Test that EasyOCR reader loads in background thread."""
+    @patch("pyshiny_hunter.enhanced_ocr.easyocr.Reader")
+    def test_reader_loads_in_background(self, mock_reader_class, pokemon_database: dict[str, int]):
+        """Test that EasyOCR reader loads in background thread.
+
+        Mocks EasyOCR to avoid download issues on CI while still testing
+        the background loading mechanism.
+        """
+        # Configure mock to return a MagicMock instance
+        mock_reader_instance = MagicMock()
+        mock_reader_class.return_value = mock_reader_instance
+
         ocr = EnhancedOCR(pokemon_database)
 
         # Loading thread should be started
@@ -228,6 +247,10 @@ class TestBackgroundLoading:
         # Accessing reader should wait for load (or return immediately if loaded)
         reader = ocr.reader
         assert reader is not None
+        assert reader == mock_reader_instance
 
         # Thread should be finished after accessing reader
         assert not ocr._loading_thread.is_alive() or ocr._reader is not None
+
+        # Verify EasyOCR Reader was called
+        mock_reader_class.assert_called_once()
