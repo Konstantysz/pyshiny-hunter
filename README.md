@@ -2,9 +2,10 @@
 
 > Automated shiny Pokémon hunting using Computer Vision and OCR
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![CI](https://github.com/Konstantysz/pyshiny-hunter/workflows/CI/badge.svg)](https://github.com/Konstantysz/pyshiny-hunter/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Konstantysz/pyshiny-hunter/branch/main/graph/badge.svg)](https://codecov.io/gh/Konstantysz/pyshiny-hunter)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 PyShiny Hunter is a Computer Vision-based automation tool for shiny Pokémon hunting in Pokémon Black 2 using the DeSmuME emulator. It combines image processing, OCR, and state machine patterns to detect and identify shiny Pokémon encounters automatically.
