@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import cv2 as cv
 import pytest
@@ -226,22 +227,30 @@ class TestEnhancedOCRIntegration:
 class TestBackgroundLoading:
     """Test background loading of EasyOCR model."""
 
-    def test_reader_loads_in_background(self, pokemon_database: dict[str, int], easyocr_model_lock):
+    @patch("pyshiny_hunter.enhanced_ocr.easyocr.Reader")
+    def test_reader_loads_in_background(self, mock_reader_class, pokemon_database: dict[str, int]):
         """Test that EasyOCR reader loads in background thread.
 
-        Uses file lock to prevent race conditions when multiple test processes
-        try to download EasyOCR models simultaneously (Windows CI issue).
+        Mocks EasyOCR to avoid download issues on CI while still testing
+        the background loading mechanism.
         """
-        with easyocr_model_lock:
-            ocr = EnhancedOCR(pokemon_database)
+        # Configure mock to return a MagicMock instance
+        mock_reader_instance = MagicMock()
+        mock_reader_class.return_value = mock_reader_instance
 
-            # Loading thread should be started
-            assert ocr._loading_thread is not None
-            assert ocr._loading_thread.daemon is True
+        ocr = EnhancedOCR(pokemon_database)
 
-            # Accessing reader should wait for load (or return immediately if loaded)
-            reader = ocr.reader
-            assert reader is not None
+        # Loading thread should be started
+        assert ocr._loading_thread is not None
+        assert ocr._loading_thread.daemon is True
 
-            # Thread should be finished after accessing reader
-            assert not ocr._loading_thread.is_alive() or ocr._reader is not None
+        # Accessing reader should wait for load (or return immediately if loaded)
+        reader = ocr.reader
+        assert reader is not None
+        assert reader == mock_reader_instance
+
+        # Thread should be finished after accessing reader
+        assert not ocr._loading_thread.is_alive() or ocr._reader is not None
+
+        # Verify EasyOCR Reader was called
+        mock_reader_class.assert_called_once()
