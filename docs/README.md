@@ -1,20 +1,47 @@
-# Documentation
+# PyShiny Hunter Documentation
 
-This directory contains additional documentation for PyShiny Hunter.
+This directory contains the Sphinx documentation for PyShiny Hunter.
 
-## Available Documentation
+## Building Documentation
 
-### [LEGAL.md](LEGAL.md)
-Complete copyright policy and legal compliance information:
-- ROM file requirements and copyright law
-- What files can/cannot be distributed
-- User responsibilities
-- Fair use and educational purpose
+### Prerequisites
 
-## Contributing
+Install documentation dependencies:
 
-For development guidelines, see [CONTRIBUTING.md](../CONTRIBUTING.md) in the project root.
+```bash
+pip install -e .[docs]
+```
 
-## Main README
+### Build Commands
 
-For project setup and usage, see [README.md](../README.md) in the project root.
+**Linux/macOS:**
+```bash
+cd docs
+make html
+```
+
+**Windows:**
+```bash
+cd docs
+make.bat html
+```
+
+**Alternative (cross-platform):**
+```bash
+sphinx-build -b html docs/source docs/build/html
+```
+
+### Viewing Documentation
+
+After building, open `docs/build/html/index.html` in your web browser.
+
+## Documentation Structure
+
+- `source/` - Source files (.rst, .md)
+- `source/api/` - API reference documentation
+- `build/html/` - Generated HTML documentation
+
+## See Also
+
+- Full documentation in `docs/build/html/index.html`
+- [Sphinx Documentation](https://www.sphinx-doc.org/)
