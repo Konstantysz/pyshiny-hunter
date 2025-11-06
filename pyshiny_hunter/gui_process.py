@@ -7,6 +7,7 @@ streams in a single window with aggregate statistics and shiny log.
 from __future__ import annotations
 
 import datetime
+import math
 import multiprocessing as mp
 import time
 from queue import Empty
@@ -49,8 +50,6 @@ def unified_gui_main_process(
     # For 5-6 workers: 2 rows, 3 cols
     # For 7-9 workers: 3 rows, 3 cols
     # For 10-12 workers: 3 rows, 4 cols
-    import math
-
     cols = min(4, max(1, math.ceil(math.sqrt(num_workers))))
     rows = math.ceil(num_workers / cols)
 
@@ -516,6 +515,37 @@ def unified_gui_main_process(
                     if elapsed_minutes > 0:
                         encounters_per_min = total_encounters / elapsed_minutes
                         imgui.text(f"Encounters/min: {encounters_per_min:.1f}")
+                else:
+                    encounters_per_min = 0.0
+
+                imgui.separator()
+
+                # Shiny ETA Display
+                imgui.text("Shiny ETA:")
+                imgui.text(f"  Probability: 1/{config.SHINY_ODDS_DENOMINATOR}")
+                imgui.text(f"  Current encounters: {total_encounters}")
+
+                # Calculate expected encounters for 50% chance
+                # Formula: N = ln(0.5) / ln(1 - p) where p = 1/8192
+                # Both ln(0.5) and ln(1-p) are negative, so division gives positive result
+                expected_50pct = math.log(0.5) / math.log(1 - shiny_odds)
+                imgui.text(f"  Expected for 50%: ~{int(expected_50pct):,}")
+
+                # Calculate remaining encounters and ETA
+                if total_encounters > 0:
+                    remaining = max(0, int(expected_50pct) - total_encounters)
+                    imgui.text(f"  Encounters remaining: {remaining:,}")
+
+                    if encounters_per_min > 0:
+                        # Calculate time remaining in minutes
+                        minutes_remaining = remaining / encounters_per_min
+                        hours = int(minutes_remaining // 60)
+                        minutes = int(minutes_remaining % 60)
+                        imgui.text(f"  Estimated time: ~{hours}h {minutes}min")
+                    else:
+                        imgui.text_colored("  Estimated time: Calculating...", 0.7, 0.7, 0.7)
+                else:
+                    imgui.text_colored("  (collecting data...)", 0.7, 0.7, 0.7)
 
                 imgui.separator()
 
