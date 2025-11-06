@@ -53,6 +53,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[dev]
 
+      - name: Pre-download EasyOCR models (Windows only)
+        if: runner.os == 'Windows'
+        run: |
+          python -c "import easyocr; easyocr.Reader(['en'], gpu=False, download_enabled=True)"
+
       - name: Run tests with coverage
         run: |
           pytest --cov=pyshiny_hunter --cov-report=xml --cov-report=term

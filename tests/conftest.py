@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from filelock import FileLock
 
 
 @pytest.fixture
@@ -86,3 +87,18 @@ def mock_pokemon_csv_files(tmp_path, sample_pokemon_names):
             f.write(f"{number},{name}\n")
 
     return tmp_path
+
+
+@pytest.fixture(scope="session")
+def easyocr_model_lock(tmp_path_factory):
+    """Ensure only one test process downloads EasyOCR models at a time.
+
+    This prevents race conditions on Windows CI where multiple test processes
+    try to download the same EasyOCR model file simultaneously, causing
+    PermissionError: [WinError 32] file locking conflicts.
+
+    The lock file is placed in the pytest temp directory and shared across
+    all test workers when running with pytest-xdist.
+    """
+    lock_file = tmp_path_factory.getbasetemp().parent / "easyocr_download.lock"
+    return FileLock(str(lock_file))
