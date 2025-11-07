@@ -59,6 +59,20 @@ def main() -> None:
         default=1,
         help="Number of worker processes (default: 1 = single mode, >1 = multi mode with auto RNG desync)",
     )
+    parser.add_argument(
+        "--target-pokemon",
+        type=str,
+        default=None,
+        help="Specific Pokemon to hunt for (e.g., 'Watchog'). When set, enables target mode with safety features.",
+    )
+    parser.add_argument(
+        "--target-action",
+        type=str,
+        choices=["alert", "pause", "continue"],
+        default="alert",
+        help="Action when non-target shiny found: 'alert' (pause all + GUI warning, safest), "
+        "'pause' (pause all + persistent notification), 'continue' (auto-skip, riskiest, requires confirmation)",
+    )
 
     args = parser.parse_args()
 
@@ -68,6 +82,28 @@ def main() -> None:
         save_path = Path(args.state)
     elif args.sav:
         save_path = Path(args.sav)
+
+    # Validate target action "continue" with explicit warning
+    if args.target_action == "continue" and args.target_pokemon:
+        logger.warning("=" * 60)
+        logger.warning("⚠️  WARNING: Target action 'continue' is RISKY!")
+        logger.warning("=" * 60)
+        logger.warning("You have selected 'continue' mode, which will automatically")
+        logger.warning("skip non-target shinies without confirmation.")
+        logger.warning("")
+        logger.warning("ALL shinies will be saved to savestates and logged, but the")
+        logger.warning("hunt will continue automatically if it's not your target.")
+        logger.warning("")
+        logger.warning("This mode is NOT recommended unless you fully understand the risks.")
+        logger.warning("=" * 60)
+
+    # Log target mode info
+    if args.target_pokemon:
+        logger.info(f"🎯 Target Pokemon: {args.target_pokemon}")
+        logger.info(f"🛡️  Target Action: {args.target_action}")
+        logger.info(
+            "Safety: ALL shinies will be saved (even non-target) - check skipped_shinies.json"
+        )
 
     # Choose mode based on num_workers
     if args.num_workers > 1:
@@ -79,14 +115,25 @@ def main() -> None:
         # DeSmuME has deterministic RNG - without desync, all workers see identical Pokemon
         MULTI_WORKER_RNG_DESYNC = True
         launch_multi_mode(
-            rom_path, save_path, args.num_workers, randomize_start=MULTI_WORKER_RNG_DESYNC
+            rom_path,
+            save_path,
+            args.num_workers,
+            randomize_start=MULTI_WORKER_RNG_DESYNC,
+            target_pokemon=args.target_pokemon,
+            target_action=args.target_action,
         )
     else:
         logger.info("Launching single-emulator mode...")
         from pyshiny_hunter.single_mode import launch_single_mode
 
         # Single mode doesn't need desync (only one emulator)
-        launch_single_mode(rom_path, save_path, randomize_start=False)
+        launch_single_mode(
+            rom_path,
+            save_path,
+            randomize_start=False,
+            target_pokemon=args.target_pokemon,
+            target_action=args.target_action,
+        )
 
 
 if __name__ == "__main__":
