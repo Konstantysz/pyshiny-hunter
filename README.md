@@ -198,6 +198,50 @@ pyshiny-hunter/
 └── .github/workflows/          # CI/CD (multi-OS, multi-Python)
 ```
 
+## 📊 Performance Benchmarks
+
+Want to measure your system's performance? Run the included benchmark suite:
+
+```bash
+# Install benchmark dependencies
+pip install -e ".[examples]"
+
+# Quick benchmark (2-3 minutes)
+python examples/benchmark_performance.py --rom roms/black2.nds --state savestate.dst --quick
+
+# Full benchmark suite (5-10 minutes)
+python examples/benchmark_performance.py --rom roms/black2.nds --state savestate.dst
+```
+
+**What's Measured:**
+
+- **OCR Performance**: CPU vs GPU speed comparison (GPU 2.86x faster)
+- **Real Multi-Worker Scaling**: Actual performance measurements with 1, 2, 4, 8, 12 workers
+- **Memory Usage**: Per-worker memory consumption tracking
+- **Startup Time**: Background OCR loading performance
+
+**Example Results:**
+
+> Test System: Intel Core i7-9750H (6-core, 2.60GHz), 32GB RAM, NVIDIA GeForce GTX 1660 Ti (6GB)
+
+| Workers | Encounters/min | Scaling Efficiency | Notes |
+|---------|----------------|--------------------| ------|
+| 1       | 9.3            | 100%               | Baseline |
+| 2       | 16.6           | 89%                | Near-linear scaling |
+| 4       | 23.7           | 64%                | GPU contention starts |
+| 8       | 24.2           | 33%                | **Optimal** |
+| 12      | 19.5           | 18%                | Performance degradation |
+
+> **Key Finding**: Performance peaks at 8 workers due to GPU/CPU contention. More workers ≠ better performance!
+
+**Output:**
+
+- `benchmark_results.json` - Raw performance data
+- `benchmark_results.md` - Formatted tables
+- Performance charts (PNG) - Visual comparisons with scaling efficiency
+
+See [examples/README.md](examples/README.md) for detailed benchmarking documentation and algorithm design notebooks.
+
 ## ⚖️ Legal Notice
 
 **Important**: This tool requires a Pokémon Black 2 ROM file.

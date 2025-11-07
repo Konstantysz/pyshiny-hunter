@@ -268,8 +268,13 @@ class EnhancedOCR:
             interpolation=cv.INTER_LANCZOS4,
         )
 
-        # 2. Convert to grayscale
-        gray = cv.cvtColor(resized, cv.COLOR_BGR2GRAY)
+        # 2. Convert to grayscale (handle both BGR and already-grayscale images)
+        if len(resized.shape) == 3 and resized.shape[2] == 3:
+            # BGR image - convert to grayscale
+            gray = cv.cvtColor(resized, cv.COLOR_BGR2GRAY)
+        else:
+            # Already grayscale
+            gray = resized
 
         # 3. Binary threshold at 127
         _, thresholded = cv.threshold(
