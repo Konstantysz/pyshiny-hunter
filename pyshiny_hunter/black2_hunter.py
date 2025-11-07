@@ -34,8 +34,12 @@ class Black2Hunter(Hunter):
     """
 
     characters_in_pokemon_names: str
+    target_pokemon: str | None
+    last_encountered_pokemon: str | None
 
-    def __init__(self, hunted_pokemon: list[str] | str | None = None):
+    def __init__(
+        self, hunted_pokemon: list[str] | str | None = None, target_pokemon: str | None = None
+    ):
         """Initialize Black2Hunter with Pokemon database and character whitelist.
 
         Loads Pokemon names from Gen 1-5 CSV files and creates a character whitelist
@@ -44,11 +48,16 @@ class Black2Hunter(Hunter):
         Args:
             hunted_pokemon: Optional Pokemon name(s) to hunt for. Can be a single
                 string or list of strings. If None, hunts all Pokemon.
+            target_pokemon: Optional specific Pokemon to hunt for target mode.
+                When set, enables target detection logic.
 
         Raises:
             FileNotFoundError: Logged as warning if CSV files are missing (gracefully handled).
         """
         Hunter.__init__(self, hunted_pokemon)
+
+        self.target_pokemon = target_pokemon
+        self.last_encountered_pokemon = None
 
         self.pokemon_database: dict[str, int] = {}
         for gen_file in config.POKEMON_CSV_FILES:
@@ -425,4 +434,55 @@ class Black2Hunter(Hunter):
         else:
             self.encounters[encounter_name] = 1
 
+        # Store for target matching
+        self.last_encountered_pokemon = encounter_name
+
         return encounter_name
+
+    def set_target_pokemon(self, target_pokemon: str | None) -> None:
+        """Set or update the target Pokemon for hunting.
+
+        Args:
+            target_pokemon: Name of the target Pokemon, or None to disable target mode.
+        """
+        self.target_pokemon = target_pokemon
+        logger.info(
+            f"Target Pokemon {'set to: ' + target_pokemon if target_pokemon else 'disabled'}"
+        )
+
+    def is_target_match(self) -> bool:
+        """Check if the last encountered Pokemon matches the target.
+
+        Returns:
+            True if target mode is disabled (target_pokemon is None) or if the
+            last encountered Pokemon matches the target. False otherwise.
+
+        Note:
+            If no Pokemon has been encountered yet, returns True (safe default).
+        """
+        # No target set = accept all shinies
+        if self.target_pokemon is None:
+            return True
+
+        # No encounter yet = safe default
+        if self.last_encountered_pokemon is None:
+            return True
+
+        # Case-insensitive comparison
+        return self.last_encountered_pokemon.lower() == self.target_pokemon.lower()
+
+    def get_target_pokemon(self) -> str | None:
+        """Get the current target Pokemon name.
+
+        Returns:
+            Target Pokemon name, or None if target mode is disabled.
+        """
+        return self.target_pokemon
+
+    def get_last_encountered_pokemon(self) -> str | None:
+        """Get the name of the last encountered Pokemon.
+
+        Returns:
+            Last encountered Pokemon name, or None if no encounter yet.
+        """
+        return self.last_encountered_pokemon
