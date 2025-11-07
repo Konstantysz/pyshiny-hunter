@@ -88,6 +88,15 @@ POKEMON_DATABASE_PATH: str = "resources/pokemon_names/"
 SHINY_ODDS_DENOMINATOR: int = 8192
 
 # =============================================================================
+# Benchmark Constants
+# =============================================================================
+
+# Average frames per encounter cycle in Pokemon Black 2
+# This includes: encounter animation + battle start + identification + reset
+# Measured empirically at 60 FPS emulation speed
+AVERAGE_ENCOUNTER_CYCLE_FRAMES: int = 450
+
+# =============================================================================
 # Screen Region Analysis
 # =============================================================================
 
