@@ -106,10 +106,14 @@ def _worker_process_frames(rom_path: str, state_path: str, duration_sec: int) ->
         # Emulate one frame
         emu.cycle()
 
-        # Capture screenshot and split
-        screen = np.array(emu.screenshot().convert("RGBA"))[:, :, ::-1].copy()
-        top_screen = screen[: int(screen.shape[0] / 2), :, 1:]
-        bottom_screen = screen[int(screen.shape[0] / 2) :, :, 1:]
+        # Capture screenshot and split (convert RGBA to BGR, remove alpha channel)
+        screen_rgba = np.array(emu.screenshot().convert("RGBA"))
+        screen = screen_rgba[:, :, ::-1].copy()  # Reverse to BGRA
+
+        # Split into top/bottom screens and remove alpha channel
+        height = screen.shape[0]
+        top_screen = screen[: height // 2, :, 1:]  # Remove alpha (channel 0 after reversal)
+        bottom_screen = screen[height // 2 :, :, 1:]
 
         # Process through CV + OCR pipeline
         hunter.send("searching_pokemon", top_screen, bottom_screen)
@@ -330,7 +334,7 @@ class PerformanceBenchmark:
         self.results.startup_benchmarks.append(
             BenchmarkResult(
                 name="Average Startup Time",
-                value=round(avg_startup, 2),
+                value=float(round(avg_startup, 2)),
                 unit="seconds",
                 metadata={
                     "std_dev": round(std_startup, 2),
@@ -375,7 +379,7 @@ class PerformanceBenchmark:
             return
 
         worker_counts = [1, 2, 4, 8, 12]
-        encounter_cycle_frames = 450  # Average frames per encounter (from documentation)
+        encounter_cycle_frames = config.AVERAGE_ENCOUNTER_CYCLE_FRAMES
         base_encounters_per_min = None  # Will be set after first worker measurement
 
         for num_workers in worker_counts:
@@ -383,17 +387,27 @@ class PerformanceBenchmark:
 
             # Measure performance
             start_time = time.perf_counter()
+            memory_mb = 0.0
 
             # Spawn worker processes
             with multiprocessing.Pool(processes=num_workers) as pool:
-                # Each worker runs the emulator + hunter pipeline for the specified duration
-                results = pool.starmap(
+                # Start workers asynchronously
+                async_results = pool.starmap_async(
                     _worker_process_frames,
                     [
                         (self.rom_path, self.state_path, duration_per_config)
                         for _ in range(num_workers)
                     ],
                 )
+
+                # Wait for workers to initialize
+                time.sleep(2)
+
+                # Measure peak memory while workers are running
+                memory_mb = self._measure_memory_usage(num_workers)
+
+                # Wait for completion
+                results = async_results.get()
 
             duration = time.perf_counter() - start_time
 
@@ -403,9 +417,6 @@ class PerformanceBenchmark:
 
             # Calculate encounters/min (frames per minute / frames per encounter)
             encounters_per_min = (total_frames / duration) * 60 / encounter_cycle_frames
-
-            # Measure memory usage
-            memory_mb = self._measure_memory_usage(num_workers)
 
             logger.info(f"  Frames processed: {total_frames}")
             logger.info(f"  Total FPS: {total_fps:.1f}")
@@ -454,17 +465,31 @@ class PerformanceBenchmark:
         logger.info("\n✓ Worker scaling benchmark complete\n")
 
     def _measure_memory_usage(self, num_workers: int) -> float:
-        """Measure current process memory usage.
+        """Measure total memory usage including all child processes.
 
         Args:
-            num_workers: Number of workers (for context, not used directly)
+            num_workers: Number of workers (for context)
 
         Returns:
-            Memory usage in MB
+            Total memory usage in MB (parent + all children)
         """
         process = psutil.Process()
-        memory_info = process.memory_info()
-        return float(memory_info.rss) / (1024 * 1024)  # Convert bytes to MB
+
+        # Get main process memory
+        total_memory = process.memory_info().rss
+
+        # Add memory from all child processes
+        try:
+            for child in process.children(recursive=True):
+                try:
+                    total_memory += child.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    # Child may have terminated
+                    pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+        return float(total_memory) / (1024 * 1024)  # Convert bytes to MB
 
     def benchmark_full_pipeline(self, num_frames: int = 300) -> None:
         """Benchmark end-to-end performance with DeSmuME emulator.
@@ -521,9 +546,11 @@ class PerformanceBenchmark:
         for _ in range(5):
             emu.cycle()
             # Get screenshot and split into top/bottom screens
-            screen = np.array(emu.screenshot().convert("RGBA"))[:, :, ::-1].copy()
-            top_screen = screen[: int(screen.shape[0] / 2), :, 1:]
-            bottom_screen = screen[int(screen.shape[0] / 2) :, :, 1:]
+            screen_rgba = np.array(emu.screenshot().convert("RGBA"))
+            screen = screen_rgba[:, :, ::-1].copy()  # Convert RGBA to BGRA
+            height = screen.shape[0]
+            top_screen = screen[: height // 2, :, 1:]  # Remove alpha channel
+            bottom_screen = screen[height // 2 :, :, 1:]
             # Send frame to hunter state machine
             hunter.send("searching_pokemon", top_screen, bottom_screen)
 
@@ -539,9 +566,11 @@ class PerformanceBenchmark:
             emu.cycle()
 
             # Capture screenshot and split (this is overhead #1)
-            screen = np.array(emu.screenshot().convert("RGBA"))[:, :, ::-1].copy()
-            top_screen = screen[: int(screen.shape[0] / 2), :, 1:]
-            bottom_screen = screen[int(screen.shape[0] / 2) :, :, 1:]
+            screen_rgba = np.array(emu.screenshot().convert("RGBA"))
+            screen = screen_rgba[:, :, ::-1].copy()  # Convert RGBA to BGRA
+            height = screen.shape[0]
+            top_screen = screen[: height // 2, :, 1:]  # Remove alpha channel
+            bottom_screen = screen[height // 2 :, :, 1:]
 
             # Process through CV + OCR pipeline (this is overhead #2)
             hunter.send("searching_pokemon", top_screen, bottom_screen)
@@ -746,11 +775,13 @@ class PerformanceBenchmark:
             annotation_text = f"GPU Speedup: {speedup:.2f}x"
 
             if end_to_end_fps:
-                # Calculate overhead
-                overhead_pct = (
-                    (ocr_results["OCR GPU Speed"] - end_to_end_fps) / ocr_results["OCR GPU Speed"]
-                ) * 100
-                annotation_text += f"\nEmulator overhead: {overhead_pct:.1f}%"
+                # Calculate overhead (handle edge cases)
+                gpu_speed = ocr_results["OCR GPU Speed"]
+                if gpu_speed > 0:
+                    overhead_pct = ((gpu_speed - end_to_end_fps) / gpu_speed) * 100
+                    # Clamp to 0-100% range (negative means measurement variance)
+                    overhead_pct = max(0.0, min(100.0, overhead_pct))
+                    annotation_text += f"\nEmulator overhead: {overhead_pct:.1f}%"
 
             ax.text(
                 0.5,
@@ -1041,7 +1072,7 @@ class PerformanceBenchmark:
             bbox={"boxstyle": "round", "facecolor": "yellow", "alpha": 0.7},
         )
 
-        plt.tight_layout(rect=[0, 0.05, 1, 1])
+        plt.tight_layout(rect=(0.0, 0.05, 1.0, 1.0))
         output_path = self.output_dir / "pipeline_comparison.png"
         plt.savefig(output_path, dpi=150)
         logger.info(f"Saved chart: {output_path}")
