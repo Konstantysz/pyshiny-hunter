@@ -74,9 +74,9 @@ def main() -> None:
         "'pause' (pause all + persistent notification), 'continue' (auto-skip, riskiest, requires confirmation)",
     )
     parser.add_argument(
-        "--gui-config",
+        "--no-gui-config",
         action="store_true",
-        help="Show GUI configuration dialog to select target Pokemon interactively (overrides CLI target args)",
+        help="Skip GUI configuration dialog and use CLI arguments only (by default, GUI config dialog is shown for multi-worker mode)",
     )
 
     args = parser.parse_args()
@@ -119,6 +119,10 @@ def main() -> None:
         # Multi-worker mode ALWAYS uses RNG desync to prevent identical encounters
         # DeSmuME has deterministic RNG - without desync, all workers see identical Pokemon
         MULTI_WORKER_RNG_DESYNC = True
+
+        # Show GUI config by default, skip if --no-gui-config is set
+        show_gui_config = not args.no_gui_config
+
         launch_multi_mode(
             rom_path,
             save_path,
@@ -126,7 +130,7 @@ def main() -> None:
             randomize_start=MULTI_WORKER_RNG_DESYNC,
             target_pokemon=args.target_pokemon,
             target_action=args.target_action,
-            show_config_dialog=args.gui_config,
+            show_config_dialog=show_gui_config,
         )
     else:
         logger.info("Launching single-emulator mode...")
