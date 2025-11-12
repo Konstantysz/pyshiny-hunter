@@ -31,6 +31,8 @@ def unified_gui_main_process(
     shiny_log: Any,  # ListProxy
     encounter_stats: Any,  # DictProxy
     init_status: Any | None = None,  # DictProxy
+    target_pokemon: str | None = None,
+    target_action: str = "alert",
 ) -> None:
     """Main GUI process displaying all worker streams.
 
@@ -41,6 +43,8 @@ def unified_gui_main_process(
         shiny_log: Shared list for centralized shiny logging
         encounter_stats: Shared dict for aggregate encounter statistics
         init_status: Shared dict tracking worker initialization progress
+        target_pokemon: Optional target Pokemon name for target mode
+        target_action: Action for non-target shinies ('alert', 'pause', 'continue')
     """
     logger.info(f"[Main GUI] Initializing unified GUI for {num_workers} workers...")
 

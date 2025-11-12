@@ -468,6 +468,7 @@ def launch_multi_mode(
     randomize_start: bool,
     target_pokemon: str | None = None,
     target_action: str = "alert",
+    show_config_dialog: bool = False,
 ) -> None:
     """Launch multi-process mode with unified GUI.
 
@@ -478,7 +479,23 @@ def launch_multi_mode(
         randomize_start: Whether to randomize starting frame for each worker
         target_pokemon: Optional target Pokemon name for target mode
         target_action: Action for non-target shinies ('alert', 'pause', 'continue')
+        show_config_dialog: If True, show GUI configuration dialog before starting
     """
+    # Show config dialog if requested
+    if show_config_dialog:
+        from pyshiny_hunter.gui_config_dialog import show_config_dialog as show_dialog
+
+        config_result = show_dialog(default_num_workers=num_workers)
+
+        if config_result.cancelled:
+            logger.info("Hunt cancelled by user in configuration dialog")
+            return
+
+        # Use dialog results
+        target_pokemon = config_result.target_pokemon
+        target_action = config_result.target_action
+        num_workers = config_result.num_workers
+
     logger.info("=" * 60)
     logger.info("🎮 PyShiny Hunter - Multi-Process Mode")
     logger.info("=" * 60)
@@ -486,6 +503,9 @@ def launch_multi_mode(
     logger.info(f"Save State: {save_path}")
     logger.info(f"Workers: {num_workers}")
     logger.info(f"Randomize Start: {randomize_start}")
+    if target_pokemon:
+        logger.info(f"🎯 Target Pokemon: {target_pokemon}")
+        logger.info(f"🛡️  Target Action: {target_action}")
     logger.info("=" * 60)
 
     # Create shared data structures
@@ -555,7 +575,14 @@ def launch_multi_mode(
 
         # Run main GUI with initialization status tracking
         unified_gui_main_process(
-            num_workers, screenshot_queue, control_queues, shiny_log, encounter_stats, init_status
+            num_workers,
+            screenshot_queue,
+            control_queues,
+            shiny_log,
+            encounter_stats,
+            init_status,
+            target_pokemon,
+            target_action,
         )
     except KeyboardInterrupt:
         logger.info("\n🛑 Stopping all workers...")
