@@ -109,6 +109,10 @@ SPARKLE_REGION_WIDTH_END_FRACTION: float = 2.0 / 3.0
 # Worker RNG Desynchronization
 # =============================================================================
 
+# Maximum number of worker processes allowed in multi-mode
+# Limited by CPU resources and diminishing returns beyond ~12 workers
+MAX_WORKERS: int = 12
+
 # DeSmuME has deterministic RNG: same savestate + same inputs = identical encounters
 # To guarantee unique RNG states across workers, we offset each worker by N frames
 # Hybrid approach: base offset (guarantees uniqueness) + random jitter (adds variety)
