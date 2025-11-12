@@ -73,6 +73,11 @@ def main() -> None:
         help="Action when non-target shiny found: 'alert' (pause all + GUI warning, safest), "
         "'pause' (pause all + persistent notification), 'continue' (auto-skip, riskiest, requires confirmation)",
     )
+    parser.add_argument(
+        "--gui-config",
+        action="store_true",
+        help="Show GUI configuration dialog to select target Pokemon interactively (overrides CLI target args)",
+    )
 
     args = parser.parse_args()
 
@@ -121,6 +126,7 @@ def main() -> None:
             randomize_start=MULTI_WORKER_RNG_DESYNC,
             target_pokemon=args.target_pokemon,
             target_action=args.target_action,
+            show_config_dialog=args.gui_config,
         )
     else:
         logger.info("Launching single-emulator mode...")
