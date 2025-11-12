@@ -160,7 +160,7 @@ def headless_worker(
 
             logger.info(f"[Worker {worker_id}] OCR loaded, waiting for other workers...")
             try:
-                desync_barrier.wait(timeout=30)  # Max 30s wait for all workers
+                desync_barrier.wait(timeout=config.WORKER_SYNC_TIMEOUT_SECONDS)
             except Exception as e:
                 logger.error(
                     f"[Worker {worker_id}] Barrier timeout or error: {e}. "
@@ -280,21 +280,19 @@ def headless_worker(
                                 encounter_stats.get("total_encounters", 0) + new_encounters
                             )
 
-                            # Update per-Pokemon counts
+                            # Update per-Pokemon counts - direct manipulation avoids dict copies
                             if "pokemon_counts" not in encounter_stats:
                                 encounter_stats["pokemon_counts"] = {}
-                            pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
-                            pokemon_counts[pokemon] = (
-                                pokemon_counts.get(pokemon, 0) + new_encounters
+                            pokemon_counts_proxy = encounter_stats["pokemon_counts"]
+                            pokemon_counts_proxy[pokemon] = (
+                                pokemon_counts_proxy.get(pokemon, 0) + new_encounters
                             )
-                            encounter_stats["pokemon_counts"] = pokemon_counts
 
-                            # Update worker contribution
+                            # Update worker contribution - direct manipulation avoids dict copies
                             if "worker_contributions" not in encounter_stats:
                                 encounter_stats["worker_contributions"] = {}
-                            worker_contribs = dict(encounter_stats.get("worker_contributions", {}))
-                            worker_contribs[worker_id] = sum(current_encounters.values())
-                            encounter_stats["worker_contributions"] = worker_contribs
+                            worker_contribs_proxy = encounter_stats["worker_contributions"]
+                            worker_contribs_proxy[worker_id] = sum(current_encounters.values())
                     else:
                         # Fallback: no lock provided (backward compatibility)
                         # WARNING: This path has race conditions and should not be used in production

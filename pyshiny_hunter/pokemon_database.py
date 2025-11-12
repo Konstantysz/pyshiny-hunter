@@ -77,9 +77,13 @@ def load_pokemon_database(generations: list[int] | None = None) -> dict[str, int
                                 continue
 
                             # Check for path traversal attempts or invalid characters in name
-                            if any(
-                                c in pokemon_name
-                                for c in ["/", "\\", "\0", "..", "<", ">", "|", "*", "?"]
+                            # Split ".." check separately for clarity
+                            if (
+                                any(
+                                    c in pokemon_name
+                                    for c in ["/", "\\", "\0", "<", ">", "|", "*", "?"]
+                                )
+                                or ".." in pokemon_name
                             ):
                                 logger.warning(
                                     f"Invalid characters in Pokemon name at {file_path}:{line_num}, skipping"

@@ -327,10 +327,23 @@ def show_config_dialog(default_num_workers: int = 4) -> ConfigResult:
 
     finally:
         # Cleanup - guaranteed to run even on exception
+        # IMPORTANT: Shutdown renderer before terminating GLFW context
         if renderer is not None:
-            renderer.shutdown()
+            try:
+                renderer.shutdown()
+            except Exception as e:
+                logger.warning(f"Error during renderer shutdown: {e}")
+
         if window is not None:
-            glfw.terminate()
+            try:
+                glfw.destroy_window(window)
+            except Exception as e:
+                logger.warning(f"Error destroying GLFW window: {e}")
+
+            try:
+                glfw.terminate()
+            except Exception as e:
+                logger.warning(f"Error terminating GLFW: {e}")
 
     # Return result or default cancelled result
     if result is None:

@@ -76,7 +76,8 @@ def main() -> None:
     parser.add_argument(
         "--no-gui-config",
         action="store_true",
-        help="Skip GUI configuration dialog and use CLI arguments only (by default, GUI config dialog is shown for multi-worker mode)",
+        help="Skip GUI configuration dialog and use CLI arguments only "
+        "(default: show GUI config in multi-worker mode)",
     )
 
     args = parser.parse_args()
