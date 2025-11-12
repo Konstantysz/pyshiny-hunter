@@ -297,6 +297,15 @@ def headless_worker(
                             encounter_stats["worker_contributions"] = worker_contribs
                     else:
                         # Fallback: no lock provided (backward compatibility)
+                        # WARNING: This path has race conditions and should not be used in production
+                        # Only warn once per worker to avoid log spam
+                        if not hasattr(logger, "_stats_lock_warning_shown"):
+                            logger.warning(
+                                f"[Worker {worker_id}] No stats_lock provided - encounter stats may be "
+                                f"inaccurate due to race conditions in multi-worker mode"
+                            )
+                            logger._stats_lock_warning_shown = True  # type: ignore[attr-defined]
+
                         encounter_stats["total_encounters"] = (
                             encounter_stats.get("total_encounters", 0) + new_encounters
                         )
@@ -483,9 +492,9 @@ def launch_multi_mode(
     """
     # Show config dialog if requested
     if show_config_dialog:
-        from pyshiny_hunter.gui_config_dialog import show_config_dialog as show_dialog
+        from pyshiny_hunter.gui_config_dialog import show_config_dialog as _show_dialog
 
-        config_result = show_dialog(default_num_workers=num_workers)
+        config_result = _show_dialog(default_num_workers=num_workers)
 
         if config_result.cancelled:
             logger.info("Hunt cancelled by user in configuration dialog")
