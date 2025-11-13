@@ -10,6 +10,7 @@ import datetime
 import json
 import multiprocessing as mp
 import random
+import re
 import time
 import traceback
 from multiprocessing.managers import DictProxy, ListProxy
@@ -21,6 +22,35 @@ from pyshiny_hunter import config
 from pyshiny_hunter.black2_hunter import Black2Hunter
 from pyshiny_hunter.module_logger import logger
 from pyshiny_hunter.py_desmume_manager import PyDeSmuMEManager
+
+# Track which workers have already shown the stats lock warning
+_warned_stats_lock: set[int] = set()
+
+
+def sanitize_pokemon_name_for_path(pokemon_name: str | None) -> str:
+    """Sanitize Pokemon name for use in file paths.
+
+    Removes or replaces characters that could cause path traversal or filesystem issues.
+    This prevents security vulnerabilities when using OCR-detected Pokemon names in filenames.
+
+    Args:
+        pokemon_name: Pokemon name from OCR (potentially untrusted input)
+
+    Returns:
+        Sanitized name safe for use in file paths (only alphanumeric, underscore, hyphen)
+    """
+    if not pokemon_name:
+        return "Unknown"
+
+    # Replace any character that's not alphanumeric, underscore, or hyphen with underscore
+    # This prevents path traversal (/, \, ..) and special filesystem characters
+    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", pokemon_name)
+
+    # Ensure we have a non-empty result
+    if not safe_name or safe_name.strip("_") == "":
+        return "Unknown"
+
+    return safe_name
 
 
 def build_complete_keymask(pressed_keys: set[str]) -> int:
@@ -192,9 +222,21 @@ def headless_worker(
 
         while manager.update_frame(hunter.get_encounters()):
             # Process control commands from GUI
-            # Monitor queue size for debugging
+            # Monitor queue size for debugging and implement back-pressure
             queue_size = control_queue.qsize()
-            if queue_size > 10:
+            if queue_size > 50:
+                # Emergency: Queue is critically backed up, drain old commands
+                logger.error(
+                    f"[Worker {worker_id}] Control queue critical: {queue_size} items, draining old commands"
+                )
+                # Keep only the most recent commands by draining all but last few
+                while queue_size > 5:
+                    try:
+                        control_queue.get_nowait()
+                        queue_size -= 1
+                    except Exception:
+                        break
+            elif queue_size > 10:
                 logger.warning(f"[Worker {worker_id}] Control queue backing up: {queue_size} items")
 
             while not control_queue.empty():
@@ -280,29 +322,38 @@ def headless_worker(
                                 encounter_stats.get("total_encounters", 0) + new_encounters
                             )
 
-                            # Update per-Pokemon counts - direct manipulation avoids dict copies
-                            if "pokemon_counts" not in encounter_stats:
+                            # Update per-Pokemon counts - ensure nested dict exists atomically
+                            # Use get() with default to avoid race condition on initialization
+                            try:
+                                pokemon_counts_proxy = encounter_stats["pokemon_counts"]
+                            except KeyError:
+                                # First access - initialize the nested dict
+                                # Note: Plain dict is sufficient here as all access is within the lock
                                 encounter_stats["pokemon_counts"] = {}
-                            pokemon_counts_proxy = encounter_stats["pokemon_counts"]
+                                pokemon_counts_proxy = encounter_stats["pokemon_counts"]
+
                             pokemon_counts_proxy[pokemon] = (
                                 pokemon_counts_proxy.get(pokemon, 0) + new_encounters
                             )
 
-                            # Update worker contribution - direct manipulation avoids dict copies
-                            if "worker_contributions" not in encounter_stats:
+                            # Update worker contribution - ensure nested dict exists atomically
+                            try:
+                                worker_contribs_proxy = encounter_stats["worker_contributions"]
+                            except KeyError:
                                 encounter_stats["worker_contributions"] = {}
-                            worker_contribs_proxy = encounter_stats["worker_contributions"]
+                                worker_contribs_proxy = encounter_stats["worker_contributions"]
+
                             worker_contribs_proxy[worker_id] = sum(current_encounters.values())
                     else:
                         # Fallback: no lock provided (backward compatibility)
                         # WARNING: This path has race conditions and should not be used in production
                         # Only warn once per worker to avoid log spam
-                        if not hasattr(logger, "_stats_lock_warning_shown"):
+                        if worker_id not in _warned_stats_lock:
                             logger.warning(
                                 f"[Worker {worker_id}] No stats_lock provided - encounter stats may be "
                                 f"inaccurate due to race conditions in multi-worker mode"
                             )
-                            logger._stats_lock_warning_shown = True  # type: ignore[attr-defined]
+                            _warned_stats_lock.add(worker_id)
 
                         encounter_stats["total_encounters"] = (
                             encounter_stats.get("total_encounters", 0) + new_encounters
@@ -360,8 +411,28 @@ def headless_worker(
                         logger.info("=" * 60)
 
                         # ALWAYS save savestate (safety first!)
-                        save_name = f"roms/states/black2/shiny_worker{worker_id}_{pokemon_name}_{battle_ready_frame - battle_start_frame}.dst"
-                        emulator.emulator.savestate.save_file(save_name)
+                        # Sanitize pokemon_name to prevent path traversal vulnerabilities
+                        safe_pokemon_name = sanitize_pokemon_name_for_path(pokemon_name)
+                        save_dir = Path("roms/states/black2")
+                        save_dir.mkdir(parents=True, exist_ok=True)
+                        save_name = (
+                            save_dir
+                            / f"shiny_worker{worker_id}_{safe_pokemon_name}_{battle_ready_frame - battle_start_frame}.dst"
+                        )
+
+                        # Validate the resolved path is within save_dir (defense in depth)
+                        try:
+                            save_name.resolve().relative_to(save_dir.resolve())
+                        except ValueError:
+                            logger.error(
+                                f"[Worker {worker_id}] Invalid savestate path detected: {save_name}"
+                            )
+                            save_name = (
+                                save_dir
+                                / f"shiny_worker{worker_id}_invalid_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.dst"
+                            )
+
+                        emulator.emulator.savestate.save_file(str(save_name))
                         logger.info(f"[Worker {worker_id}] 💾 Saved to: {save_name}")
 
                         # Log to centralized shiny log with target info
@@ -370,7 +441,7 @@ def headless_worker(
                             "timestamp": datetime.datetime.now().isoformat(),
                             "pokemon_name": pokemon_name,
                             "frame_diff": battle_ready_frame - battle_start_frame,
-                            "save_file": save_name,
+                            "save_file": str(save_name),
                             "total_encounters": sum(hunter.get_encounters().values()),
                             "encounters": dict(hunter.get_encounters()),
                             "is_target": is_target,
@@ -394,7 +465,7 @@ def headless_worker(
                                     "pokemon_name": pokemon_name,
                                     "target_pokemon": target_pokemon,
                                     "frame_diff": battle_ready_frame - battle_start_frame,
-                                    "save_file": save_name,
+                                    "save_file": str(save_name),
                                     "total_encounters": sum(hunter.get_encounters().values()),
                                     "encounters": dict(hunter.get_encounters()),
                                     "action_taken": target_action,
