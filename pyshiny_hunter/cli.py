@@ -103,8 +103,18 @@ def main() -> None:
         logger.warning("This mode is NOT recommended unless you fully understand the risks.")
         logger.warning("=" * 60)
 
-    # Log target mode info
+    # Validate target Pokemon name if provided
     if args.target_pokemon:
+        from pyshiny_hunter.pokemon_database import validate_pokemon_name
+
+        is_valid, error_msg, canonical_name = validate_pokemon_name(args.target_pokemon)
+        if not is_valid:
+            logger.error(f"Invalid target Pokemon: {error_msg}")
+            logger.error("Please check the Pokemon name and try again.")
+            return  # Exit gracefully
+
+        # Use the canonical (properly capitalized) name
+        args.target_pokemon = canonical_name
         logger.info(f"🎯 Target Pokemon: {args.target_pokemon}")
         logger.info(f"🛡️  Target Action: {args.target_action}")
         logger.info(
