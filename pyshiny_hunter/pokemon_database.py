@@ -11,6 +11,10 @@ from pathlib import Path
 from pyshiny_hunter import config
 from pyshiny_hunter.module_logger import logger
 
+# Cache for lowercase name mapping to avoid rebuilding on every validation
+_lowercase_map_cache: dict[str, str] = {}
+_cache_source_db: dict[str, int] | None = None
+
 
 def load_pokemon_database(generations: list[int] | None = None) -> dict[str, int]:
     """Load Pokemon names and Pokedex numbers from CSV files.
@@ -140,12 +144,16 @@ def validate_pokemon_name(
     if pokemon_db is None:
         pokemon_db = load_pokemon_database()
 
-    # Build lowercase lookup map for O(1) validation (more efficient than O(n) loop)
-    name_lower = name.strip().lower()
-    lowercase_map = {db_name.lower(): db_name for db_name in pokemon_db.keys()}
+    # Use cached lowercase map if available and matches current database
+    global _lowercase_map_cache, _cache_source_db
+    if _cache_source_db is not pokemon_db or not _lowercase_map_cache:
+        # Cache miss or database changed - rebuild the map
+        _lowercase_map_cache = {db_name.lower(): db_name for db_name in pokemon_db.keys()}
+        _cache_source_db = pokemon_db
 
-    if name_lower in lowercase_map:
-        return True, "", lowercase_map[name_lower]  # Return canonical name
+    name_lower = name.strip().lower()
+    if name_lower in _lowercase_map_cache:
+        return True, "", _lowercase_map_cache[name_lower]  # Return canonical name
 
     # Not found - suggest close matches
     try:
