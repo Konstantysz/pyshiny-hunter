@@ -10,6 +10,7 @@ import datetime
 import json
 import multiprocessing as mp
 import random
+import re
 import time
 import traceback
 from multiprocessing.managers import DictProxy, ListProxy
@@ -21,6 +22,35 @@ from pyshiny_hunter import config
 from pyshiny_hunter.black2_hunter import Black2Hunter
 from pyshiny_hunter.module_logger import logger
 from pyshiny_hunter.py_desmume_manager import PyDeSmuMEManager
+
+# Track which workers have already shown the stats lock warning
+_warned_stats_lock: set[int] = set()
+
+
+def sanitize_pokemon_name_for_path(pokemon_name: str | None) -> str:
+    """Sanitize Pokemon name for use in file paths.
+
+    Removes or replaces characters that could cause path traversal or filesystem issues.
+    This prevents security vulnerabilities when using OCR-detected Pokemon names in filenames.
+
+    Args:
+        pokemon_name: Pokemon name from OCR (potentially untrusted input)
+
+    Returns:
+        Sanitized name safe for use in file paths (only alphanumeric, underscore, hyphen)
+    """
+    if not pokemon_name:
+        return "Unknown"
+
+    # Replace any character that's not alphanumeric, underscore, or hyphen with underscore
+    # This prevents path traversal (/, \, ..) and special filesystem characters
+    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", pokemon_name)
+
+    # Ensure we have a non-empty result
+    if not safe_name or safe_name.strip("_") == "":
+        return "Unknown"
+
+    return safe_name
 
 
 def build_complete_keymask(pressed_keys: set[str]) -> int:
@@ -78,6 +108,9 @@ def headless_worker(
     desync_barrier: Barrier | None = None,
     init_status: DictProxy[Any, Any] | None = None,
     stats_lock: Any | None = None,
+    target_pokemon: str | None = None,
+    target_action: str = "alert",
+    skipped_log: ListProxy[Any] | None = None,
 ) -> None:
     """Headless worker process running emulator and streaming screenshots.
 
@@ -93,6 +126,9 @@ def headless_worker(
         desync_barrier: Optional multiprocessing.Barrier for synchronizing desync completion
         init_status: Shared dict for reporting initialization progress to GUI
         stats_lock: Optional lock for thread-safe encounter stats updates
+        target_pokemon: Optional target Pokemon name for target mode
+        target_action: Action for non-target shinies ('alert', 'pause', 'continue')
+        skipped_log: Shared list for logging skipped non-target shinies
     """
     try:
         # Report status: Loading emulator
@@ -139,7 +175,7 @@ def headless_worker(
             init_status[worker_id] = "loading_ocr"
 
         # Create hunter (this starts loading EasyOCR in background)
-        hunter = Black2Hunter()
+        hunter = Black2Hunter(target_pokemon=target_pokemon)
 
         # Wait for EasyOCR to finish loading before barrier
         # This ensures clean startup without background loading interfering with main loop
@@ -154,7 +190,7 @@ def headless_worker(
 
             logger.info(f"[Worker {worker_id}] OCR loaded, waiting for other workers...")
             try:
-                desync_barrier.wait(timeout=30)  # Max 30s wait for all workers
+                desync_barrier.wait(timeout=config.WORKER_SYNC_TIMEOUT_SECONDS)
             except Exception as e:
                 logger.error(
                     f"[Worker {worker_id}] Barrier timeout or error: {e}. "
@@ -186,9 +222,21 @@ def headless_worker(
 
         while manager.update_frame(hunter.get_encounters()):
             # Process control commands from GUI
-            # Monitor queue size for debugging
+            # Monitor queue size for debugging and implement back-pressure
             queue_size = control_queue.qsize()
-            if queue_size > 10:
+            if queue_size > 50:
+                # Emergency: Queue is critically backed up, drain old commands
+                logger.error(
+                    f"[Worker {worker_id}] Control queue critical: {queue_size} items, draining old commands"
+                )
+                # Keep only the most recent commands by draining all but last few
+                while queue_size > 5:
+                    try:
+                        control_queue.get_nowait()
+                        queue_size -= 1
+                    except Exception:
+                        break
+            elif queue_size > 10:
                 logger.warning(f"[Worker {worker_id}] Control queue backing up: {queue_size} items")
 
             while not control_queue.empty():
@@ -274,23 +322,39 @@ def headless_worker(
                                 encounter_stats.get("total_encounters", 0) + new_encounters
                             )
 
-                            # Update per-Pokemon counts
-                            if "pokemon_counts" not in encounter_stats:
+                            # Update per-Pokemon counts - ensure nested dict exists atomically
+                            # Use get() with default to avoid race condition on initialization
+                            try:
+                                pokemon_counts_proxy = encounter_stats["pokemon_counts"]
+                            except KeyError:
+                                # First access - initialize the nested dict
+                                # Note: Plain dict is sufficient here as all access is within the lock
                                 encounter_stats["pokemon_counts"] = {}
-                            pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
-                            pokemon_counts[pokemon] = (
-                                pokemon_counts.get(pokemon, 0) + new_encounters
-                            )
-                            encounter_stats["pokemon_counts"] = pokemon_counts
+                                pokemon_counts_proxy = encounter_stats["pokemon_counts"]
 
-                            # Update worker contribution
-                            if "worker_contributions" not in encounter_stats:
+                            pokemon_counts_proxy[pokemon] = (
+                                pokemon_counts_proxy.get(pokemon, 0) + new_encounters
+                            )
+
+                            # Update worker contribution - ensure nested dict exists atomically
+                            try:
+                                worker_contribs_proxy = encounter_stats["worker_contributions"]
+                            except KeyError:
                                 encounter_stats["worker_contributions"] = {}
-                            worker_contribs = dict(encounter_stats.get("worker_contributions", {}))
-                            worker_contribs[worker_id] = sum(current_encounters.values())
-                            encounter_stats["worker_contributions"] = worker_contribs
+                                worker_contribs_proxy = encounter_stats["worker_contributions"]
+
+                            worker_contribs_proxy[worker_id] = sum(current_encounters.values())
                     else:
                         # Fallback: no lock provided (backward compatibility)
+                        # WARNING: This path has race conditions and should not be used in production
+                        # Only warn once per worker to avoid log spam
+                        if worker_id not in _warned_stats_lock:
+                            logger.warning(
+                                f"[Worker {worker_id}] No stats_lock provided - encounter stats may be "
+                                f"inaccurate due to race conditions in multi-worker mode"
+                            )
+                            _warned_stats_lock.add(worker_id)
+
                         encounter_stats["total_encounters"] = (
                             encounter_stats.get("total_encounters", 0) + new_encounters
                         )
@@ -333,25 +397,109 @@ def headless_worker(
 
                     if hunter.current_state.id == "found":
                         # SHINY FOUND!
+                        pokemon_name = hunter.get_last_encountered_pokemon() or "Unknown"
+                        is_target = hunter.is_target_match()
+
                         logger.info("=" * 60)
-                        logger.info(f"[Worker {worker_id}] ⭐ SHINY POKEMON FOUND! ⭐")
+                        logger.info(
+                            f"[Worker {worker_id}] ⭐ SHINY POKEMON FOUND: {pokemon_name} ⭐"
+                        )
+                        if target_pokemon:
+                            logger.info(
+                                f"[Worker {worker_id}] Target: {target_pokemon} | Match: {is_target}"
+                            )
                         logger.info("=" * 60)
 
-                        save_name = f"roms/states/black2/shiny_worker{worker_id}_{battle_ready_frame - battle_start_frame}.dst"
-                        emulator.emulator.savestate.save_file(save_name)
-                        logger.info(f"[Worker {worker_id}] Saved to: {save_name}")
+                        # ALWAYS save savestate (safety first!)
+                        # Sanitize pokemon_name to prevent path traversal vulnerabilities
+                        safe_pokemon_name = sanitize_pokemon_name_for_path(pokemon_name)
+                        save_dir = Path("roms/states/black2")
+                        save_dir.mkdir(parents=True, exist_ok=True)
+                        save_name = (
+                            save_dir
+                            / f"shiny_worker{worker_id}_{safe_pokemon_name}_{battle_ready_frame - battle_start_frame}.dst"
+                        )
 
-                        # Log to centralized shiny log
+                        # Validate the resolved path is within save_dir (defense in depth)
+                        try:
+                            save_name.resolve().relative_to(save_dir.resolve())
+                        except ValueError:
+                            logger.error(
+                                f"[Worker {worker_id}] Invalid savestate path detected: {save_name}"
+                            )
+                            save_name = (
+                                save_dir
+                                / f"shiny_worker{worker_id}_invalid_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.dst"
+                            )
+
+                        emulator.emulator.savestate.save_file(str(save_name))
+                        logger.info(f"[Worker {worker_id}] 💾 Saved to: {save_name}")
+
+                        # Log to centralized shiny log with target info
                         shiny_entry = {
                             "worker_id": worker_id,
                             "timestamp": datetime.datetime.now().isoformat(),
+                            "pokemon_name": pokemon_name,
                             "frame_diff": battle_ready_frame - battle_start_frame,
-                            "save_file": save_name,
+                            "save_file": str(save_name),
                             "total_encounters": sum(hunter.get_encounters().values()),
                             "encounters": dict(hunter.get_encounters()),
+                            "is_target": is_target,
+                            "target_pokemon": target_pokemon,
                         }
                         shiny_log.append(shiny_entry)
-                        logger.info(f"[Worker {worker_id}] Logged to centralized shiny log")
+                        logger.info(f"[Worker {worker_id}] ✅ Logged to centralized shiny log")
+
+                        # Target mode logic
+                        if target_pokemon and not is_target:
+                            # Non-target shiny found!
+                            logger.warning(
+                                f"[Worker {worker_id}] ⚠️  Non-target shiny: {pokemon_name}"
+                            )
+
+                            # Log to skipped shinies
+                            if skipped_log is not None:
+                                skipped_entry = {
+                                    "worker_id": worker_id,
+                                    "timestamp": datetime.datetime.now().isoformat(),
+                                    "pokemon_name": pokemon_name,
+                                    "target_pokemon": target_pokemon,
+                                    "frame_diff": battle_ready_frame - battle_start_frame,
+                                    "save_file": str(save_name),
+                                    "total_encounters": sum(hunter.get_encounters().values()),
+                                    "encounters": dict(hunter.get_encounters()),
+                                    "action_taken": target_action,
+                                }
+                                skipped_log.append(skipped_entry)
+                                logger.info(f"[Worker {worker_id}] 📋 Logged to skipped shinies")
+
+                            # Handle based on target_action
+                            if target_action == "alert":
+                                # Mode 1: Pause and show GUI warning (handled by GUI)
+                                logger.warning(
+                                    f"[Worker {worker_id}] 🚨 ACTION: alert - Pausing for user decision"
+                                )
+                                paused = True
+                            elif target_action == "pause":
+                                # Mode 2: Pause with persistent notification
+                                logger.warning(
+                                    f"[Worker {worker_id}] ⏸️  ACTION: pause - Pausing until user resumes"
+                                )
+                                paused = True
+                            elif target_action == "continue":
+                                # Mode 3: Auto-continue (risky!)
+                                logger.warning(
+                                    f"[Worker {worker_id}] ▶️  ACTION: continue - Auto-skipping (savestate preserved!)"
+                                )
+                                # Don't pause, just continue hunting
+                        else:
+                            # Target match or no target mode - this is the shiny we want!
+                            if target_pokemon:
+                                logger.info(
+                                    f"[Worker {worker_id}] 🎯 TARGET MATCH! {pokemon_name} found!"
+                                )
+                            # Always pause when target is found
+                            paused = True
                     else:
                         manager.add_input_to_queue(0, "touch", x=128, y=180)
 
@@ -396,6 +544,9 @@ def launch_multi_mode(
     save_path: Path | None,
     num_workers: int,
     randomize_start: bool,
+    target_pokemon: str | None = None,
+    target_action: str = "alert",
+    show_config_dialog: bool = False,
 ) -> None:
     """Launch multi-process mode with unified GUI.
 
@@ -404,7 +555,25 @@ def launch_multi_mode(
         save_path: Path to save state file (optional)
         num_workers: Number of worker processes to spawn
         randomize_start: Whether to randomize starting frame for each worker
+        target_pokemon: Optional target Pokemon name for target mode
+        target_action: Action for non-target shinies ('alert', 'pause', 'continue')
+        show_config_dialog: If True, show GUI configuration dialog before starting
     """
+    # Show config dialog if requested
+    if show_config_dialog:
+        from pyshiny_hunter.gui_config_dialog import show_config_dialog as _show_dialog
+
+        config_result = _show_dialog(default_num_workers=num_workers)
+
+        if config_result.cancelled:
+            logger.info("Hunt cancelled by user in configuration dialog")
+            return
+
+        # Use dialog results
+        target_pokemon = config_result.target_pokemon
+        target_action = config_result.target_action
+        num_workers = config_result.num_workers
+
     logger.info("=" * 60)
     logger.info("🎮 PyShiny Hunter - Multi-Process Mode")
     logger.info("=" * 60)
@@ -412,6 +581,9 @@ def launch_multi_mode(
     logger.info(f"Save State: {save_path}")
     logger.info(f"Workers: {num_workers}")
     logger.info(f"Randomize Start: {randomize_start}")
+    if target_pokemon:
+        logger.info(f"🎯 Target Pokemon: {target_pokemon}")
+        logger.info(f"🛡️  Target Action: {target_action}")
     logger.info("=" * 60)
 
     # Create shared data structures
@@ -423,6 +595,7 @@ def launch_multi_mode(
 
     # Shared shiny log and encounter statistics
     shiny_log: ListProxy[Any] = manager.list()
+    skipped_log: ListProxy[Any] = manager.list()  # Separate log for skipped shinies
     encounter_stats: DictProxy[Any, Any] = manager.dict(
         {
             "total_encounters": 0,
@@ -460,6 +633,9 @@ def launch_multi_mode(
                 desync_barrier,
                 init_status,
                 stats_lock,
+                target_pokemon,
+                target_action,
+                skipped_log,
             ),
         )
         p.start()
@@ -477,7 +653,14 @@ def launch_multi_mode(
 
         # Run main GUI with initialization status tracking
         unified_gui_main_process(
-            num_workers, screenshot_queue, control_queues, shiny_log, encounter_stats, init_status
+            num_workers,
+            screenshot_queue,
+            control_queues,
+            shiny_log,
+            encounter_stats,
+            init_status,
+            target_pokemon,
+            target_action,
         )
     except KeyboardInterrupt:
         logger.info("\n🛑 Stopping all workers...")
@@ -496,6 +679,16 @@ def launch_multi_mode(
             with open(log_file, "w") as f:
                 json.dump(list(shiny_log), f, indent=2)
             logger.info(f"\n💾 Saved shiny log to: {log_file} ({len(shiny_log)} entries)")
+
+        # Save skipped shinies log to file
+        if len(skipped_log) > 0:
+            skipped_file = Path("skipped_shinies.json")
+            with open(skipped_file, "w") as f:
+                json.dump(list(skipped_log), f, indent=2)
+            logger.info(f"💾 Saved skipped shinies to: {skipped_file} ({len(skipped_log)} entries)")
+            logger.warning(
+                "⚠️  Check skipped_shinies.json for non-target shinies that were skipped!"
+            )
 
         # Save encounter stats to file
         total_encounters = int(encounter_stats.get("total_encounters", 0))

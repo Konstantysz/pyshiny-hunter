@@ -12,6 +12,7 @@ benchmark_output/
 # Runtime generated files
 encounter_stats.json
 shiny_log.json
+skipped_shinies.json
 
 # Allow screenshots in docs/images/
 !docs/images/*.png

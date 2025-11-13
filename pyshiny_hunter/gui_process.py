@@ -31,6 +31,8 @@ def unified_gui_main_process(
     shiny_log: Any,  # ListProxy
     encounter_stats: Any,  # DictProxy
     init_status: Any | None = None,  # DictProxy
+    target_pokemon: str | None = None,
+    target_action: str = "alert",
 ) -> None:
     """Main GUI process displaying all worker streams.
 
@@ -41,6 +43,8 @@ def unified_gui_main_process(
         shiny_log: Shared list for centralized shiny logging
         encounter_stats: Shared dict for aggregate encounter statistics
         init_status: Shared dict tracking worker initialization progress
+        target_pokemon: Optional target Pokemon name for target mode
+        target_action: Action for non-target shinies ('alert', 'pause', 'continue')
     """
     logger.info(f"[Main GUI] Initializing unified GUI for {num_workers} workers...")
 
@@ -102,6 +106,10 @@ def unified_gui_main_process(
         controlled_worker: int | None = None
         frame_count = 0  # For throttling debug logs
         prev_key_state: set[str] = set()  # Track previous key state to only send changes
+
+        # Cache for encounter stats to avoid dict conversions every frame
+        last_pokemon_counts: dict[str, int] = {}
+        last_encounter_stats_total: int = 0
 
         while not glfw.window_should_close(window):
             glfw.poll_events()
@@ -572,11 +580,17 @@ def unified_gui_main_process(
                 imgui.separator()
 
                 # Per-Pokemon breakdown (from shared stats)
+                # Only convert dict when stats actually change to reduce overhead at 60 FPS
                 imgui.text("Pokemon Breakdown:")
-                pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
-                if pokemon_counts:
+                current_total = encounter_stats.get("total_encounters", 0)
+                if current_total != last_encounter_stats_total:
+                    # Stats changed - update cache
+                    last_pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
+                    last_encounter_stats_total = current_total
+
+                if last_pokemon_counts:
                     for pokemon, count in sorted(
-                        pokemon_counts.items(), key=lambda x: x[1], reverse=True
+                        last_pokemon_counts.items(), key=lambda x: x[1], reverse=True
                     ):
                         imgui.text(f"  {pokemon}: {count}")
                 else:

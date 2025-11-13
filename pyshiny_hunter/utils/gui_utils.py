@@ -21,12 +21,13 @@ def glfw_init(
     glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, gl.GL_TRUE)
 
     window = glfw.create_window(int(width), int(height), window_name, None, None)
-    glfw.make_context_current(window)
 
     if not window:
         glfw.terminate()
         logger.error("Could not initialize Window")
         sys.exit(1)
+
+    glfw.make_context_current(window)
 
     return window
 
