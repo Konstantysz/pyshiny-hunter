@@ -107,6 +107,10 @@ def unified_gui_main_process(
         frame_count = 0  # For throttling debug logs
         prev_key_state: set[str] = set()  # Track previous key state to only send changes
 
+        # Cache for encounter stats to avoid dict conversions every frame
+        last_pokemon_counts: dict[str, int] = {}
+        last_encounter_stats_total: int = 0
+
         while not glfw.window_should_close(window):
             glfw.poll_events()
             renderer.process_inputs()
@@ -576,11 +580,17 @@ def unified_gui_main_process(
                 imgui.separator()
 
                 # Per-Pokemon breakdown (from shared stats)
+                # Only convert dict when stats actually change to reduce overhead at 60 FPS
                 imgui.text("Pokemon Breakdown:")
-                pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
-                if pokemon_counts:
+                current_total = encounter_stats.get("total_encounters", 0)
+                if current_total != last_encounter_stats_total:
+                    # Stats changed - update cache
+                    last_pokemon_counts = dict(encounter_stats.get("pokemon_counts", {}))
+                    last_encounter_stats_total = current_total
+
+                if last_pokemon_counts:
                     for pokemon, count in sorted(
-                        pokemon_counts.items(), key=lambda x: x[1], reverse=True
+                        last_pokemon_counts.items(), key=lambda x: x[1], reverse=True
                     ):
                         imgui.text(f"  {pokemon}: {count}")
                 else:
